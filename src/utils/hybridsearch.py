@@ -21,7 +21,6 @@ Environment Variables Required:
 - NEO4J_USER
 - NEO4J_PASSWORD
 - NEO4J_DATABASE
-- EMBEDDINGS_MODEL
 
 Example:
     from hybrid_search import HybridSearchQuery, hybrid_search
@@ -38,12 +37,10 @@ NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE")
-EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL")
 
 print(f"NEO4J_URI: {NEO4J_URI}")
 print(f"USERNAME: {NEO4J_USER}")
 print(f"DATABASE: {NEO4J_DATABASE}")
-print(f"EMBEDDINGS_MODEL: {EMBEDDINGS_MODEL}")
 
 from langchain_community.retrievers import BM25Retriever
 from langchain_neo4j import Neo4jVector
@@ -64,38 +61,7 @@ from pydantic import BaseModel, Field
 # module_path = Path(__file__).resolve().parent
 # print(module_path)
 # sys.path.append(str(module_path))
-
-import unicodedata
-# VietnameseToneNormalization.md
-# https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
-
-TONE_NORM_VI = {
-    'òa': 'oà', 'Òa': 'Oà', 'ÒA': 'OÀ',\
-    'óa': 'oá', 'Óa': 'Oá', 'ÓA': 'OÁ',\
-    'ỏa': 'oả', 'Ỏa': 'Oả', 'ỎA': 'OẢ',\
-    'õa': 'oã', 'Õa': 'Oã', 'ÕA': 'OÃ',\
-    'ọa': 'oạ', 'Ọa': 'Oạ', 'ỌA': 'OẠ',\
-    'òe': 'oè', 'Òe': 'Oè', 'ÒE': 'OÈ',\
-    'óe': 'oé', 'Óe': 'Oé', 'ÓE': 'OÉ',\
-    'ỏe': 'oẻ', 'Ỏe': 'Oẻ', 'ỎE': 'OẺ',\
-    'õe': 'oẽ', 'Õe': 'Oẽ', 'ÕE': 'OẼ',\
-    'ọe': 'oẹ', 'Ọe': 'Oẹ', 'ỌE': 'OẸ',\
-    'ùy': 'uỳ', 'Ùy': 'Uỳ', 'ÙY': 'UỲ',\
-    'úy': 'uý', 'Úy': 'Uý', 'ÚY': 'UÝ',\
-    'ủy': 'uỷ', 'Ủy': 'Uỷ', 'ỦY': 'UỶ',\
-    'ũy': 'uỹ', 'Ũy': 'Uỹ', 'ŨY': 'UỸ',\
-    'ụy': 'uỵ', 'Ụy': 'Uỵ', 'ỤY': 'UỴ'
-    }
-
-def normalize_vnese(text):
-    for i, j in TONE_NORM_VI.items():
-        text = text.replace(i, j)
-    # Normalize input text to NFC
-    text = unicodedata.normalize("NFC", text)
-    # normalize spacing
-    text = text.replace('\xa0', ' ')
-    return text
-
+from src.utils.helpers import normalize_vnese
 
 class HybridSearchQuery(BaseModel):
     """
@@ -127,15 +93,14 @@ class HybridRetrieverPipeline:
     Hybrid search with BM25 + Neo4j, re-ranked by Cohere reranker.
 
     Call `search(query)` to:
-      1. Retrieve candidate documents.
-      2. Apply Cohere Rerank v2.
+    1. Retrieve candidate documents.
+    2. Apply Cohere Rerank v2.
     """
 
     def __init__(
         self,
         bm25_preprocessing_func: Callable,
-        rerank_model: str = "Qwen/Qwen3-Reranker-0.6B",
-        rerank_url: str = "http://localhost:8001",
+        rerank_func: Callable[[str, List[str]], List[Dict[str, Any]]]
     ):
         load_dotenv()
 
@@ -146,13 +111,15 @@ class HybridRetrieverPipeline:
             preprocess_func=bm25_preprocessing_func
         )
         self.neo4j = load_neo4j_retriever()
+        # Assign reranker function
+        self.rerank_func = rerank_func
 
-        # Cohere clients (rerank)
-        self.reranker = cohere.ClientV2(
-            api_key=os.getenv("COHERE_API_KEY", "text"),
-            base_url=rerank_url
-        )
-        self.rerank_model = rerank_model
+        # # Cohere clients (rerank)
+        # self.reranker = cohere.ClientV2(
+        #     api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
+        #     base_url=os.getenv("OPENAI_BASE_URL_EMBED", None)
+        # )
+        # self.rerank_model = os.getenv("OPENAI_API_MODEL_NAME_RERANK", None)
 
     def get_ensemble(self, k: int):
         """Get an ensemble retriever with top-k results."""
@@ -181,12 +148,20 @@ class HybridRetrieverPipeline:
 
         return [ r.index for r in rerank_results]
 
-    def search(self, query: str, k: int = 100):
+    def search(self, query: str, k: int = 50):
         """Retrieve with ensemble, then rerank with Cohere."""
         ensemble = self.get_ensemble(k=k)
         docs = ensemble.invoke(query, config={})
-        reranked_idxes = self.rerank(query, [ d.page_content.strip() for d in docs])
-
+        docs_reranked = self.rerank_func(
+            query, 
+            [ d.page_content.strip() for d in docs]
+        )
+        
+        if isinstance(docs_reranked,dict):
+            reranked_idxes = [ r["index"] for r in docs_reranked["results"]]
+        else:
+            reranked_idxes = [ r.index for r in docs_reranked.results]
+        
         # Reorder origin_documents based on rerank_results order
         sorted_documents = [docs[r] for r in reranked_idxes]
         
@@ -196,11 +171,10 @@ class HybridRetrieverPipeline:
 def load_neo4j_retriever(k: int = 50):
 
     embedder = OpenAIEmbeddings(
-        model="Qwen/Qwen3-Embedding-0.6B",
-        base_url="http://localhost:8000/v1",
-        api_key="text",
+        model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
+        base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
+        api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
         tiktoken_enabled=False
-        # dimensions=1024
     )
 
     text_node_properties = ["text"]
@@ -271,7 +245,11 @@ def bm25_preprocessing_func(text: str) -> List[str]:
     return normalized.split()
 
 from langchain_core.tools import tool
-pipeline = HybridRetrieverPipeline(bm25_preprocessing_func=bm25_preprocessing_func)
+from src.utils.helpers import rerank_novita
+pipeline = HybridRetrieverPipeline(
+    bm25_preprocessing_func=bm25_preprocessing_func,
+    rerank_func=rerank_novita
+)
 
 @tool(args_schema=HybridSearchQuery, response_format="content_and_artifact")
 def hybrid_search(**kwargs):
@@ -287,6 +265,6 @@ def run_hybrid_search(query, k):
         raise ValueError("Query must not be None")
 
     query = normalize_vnese(query)
-    results = pipeline.search(query)
+    results = pipeline.search(query, 100)
     
     return results[:k]

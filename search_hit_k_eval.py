@@ -31,7 +31,7 @@ def hybrid_search(prompt: str, k: int):
 # --------------------------
 # Benchmark for dataframe
 # --------------------------
-def benchmark_df(df: pd.DataFrame, ks=(1, 5, 10)):
+def benchmark_df(df: pd.DataFrame, ks=(1, 5, 20)):
     results = {f"hit@{k}": 0 for k in ks}
     results["missed"] = []   # danh sách lưu id/query bị miss
     
@@ -45,9 +45,12 @@ def benchmark_df(df: pd.DataFrame, ks=(1, 5, 10)):
         print(f"[TEST] id={ground_truth_id} | query='{query}'")
 
         hit_any = False
+        max_k = max(ks)
+        # hybrid_search max_k, then select k_i for saving tokens
+        retrieved = hybrid_search(query, max_k)
         for k in ks:
-            retrieved = hybrid_search(query, k)
-            if any(r["_id"] == ground_truth_id for r in retrieved):
+            retrieved_k = retrieved[:k]
+            if any(r["_id"] == ground_truth_id for r in retrieved_k):
                 results[f"hit@{k}"] += 1
                 hit_any = True
         

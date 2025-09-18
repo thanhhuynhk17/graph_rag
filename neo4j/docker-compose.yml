@@ -1,11 +1,12 @@
 services:
   neo4j:
     image: neo4j:5.26.8 # LTS version
+    container_name: neo4j
     volumes:
-        - ./neo4j/logs:/logs
-        - ./neo4j/config:/config
-        - ./neo4j/data:/data
-        - ./neo4j/plugins:/plugins
+        - ./logs:/logs
+        - ./config:/config
+        - ./data:/data
+        - ./plugins:/plugins
     ports:
       - 7473:7473
       - 7474:7474

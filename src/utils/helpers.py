@@ -13,7 +13,9 @@
 
 #     return "\n".join(markdown_texts)
 
+import requests
 import unicodedata
+
 # VietnameseToneNormalization.md
 # https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
 
@@ -134,3 +136,60 @@ async def process_and_embed_to_neo4j(
 
     print(f"✅ Embedded {len(docs)} chunks to Neo4j vector store (index: {index_name})")
     # return vectorstore
+    
+
+
+def rerank_novita(
+    query: str,
+    documents: list[str],
+    model: str = "baai/bge-reranker-v2-m3",
+    top_n: int = 5,
+    api_key: str | None = None,
+    base_url: str = "https://api.novita.ai/openai/v1/rerank"
+) -> list[dict]:
+    """
+    Call Novita's rerank API.
+
+    Args:
+        query (str): The search/query string.
+        documents (list[str]): List of documents to rerank.
+        model (str): Reranker model (default: baai/bge-reranker-v2-m3).
+        top_n (int): How many top results to return.
+        api_key (str): Novita API key (default: read from OPENAI_API_KEY_EMBED).
+        base_url (str): Rerank endpoint.
+
+    Returns:
+        List of dicts with reranked results.
+    """
+    if api_key is None:
+        api_key = os.getenv("OPENAI_API_KEY_EMBED")
+        if not api_key:
+            raise ValueError("API key not provided and OPENAI_API_KEY_EMBED not set in .env")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": model,
+        "query": query,
+        "documents": documents,
+        "top_n": top_n
+    }
+
+    response = requests.post(base_url, headers=headers, json=payload)
+    response.raise_for_status()  # raise error if status != 200
+
+    return response.json()
+
+import cohere
+
+def cohere_rerank(query: str, documents: list[str]):
+    client = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
+    response = client.rerank(
+        model="rerank-english-v3.0",
+        query=query,
+        documents=documents
+    )
+    return [{"doc": r.document, "score": r.relevance_score} for r in response.results]

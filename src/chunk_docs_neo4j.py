@@ -1,10 +1,13 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 import logging
 import glob
 from langchain_community.embeddings import OpenAIEmbeddings
 from utils.helpers import process_and_embed_to_neo4j
 import argparse
-import os
 
 # Configure logger
 logging.basicConfig(
@@ -33,18 +36,14 @@ async def main():
         except FileNotFoundError:
             print(f"❌ File not found: {args.file}")
             return
-    else:
-        file_paths = []
-        for ext in SUPPORTED_EXTS:
-            file_paths.extend(glob.glob(f"data/34NghiQuyet/*.{ext}"))
-        print(f"📂 Found {len(file_paths)} supported files in data/34NghiQuyet")
+
 
     print(file_paths)
 
     embeddings = OpenAIEmbeddings(
-        model="Qwen/Qwen3-Embedding-0.6B",
-        base_url="http://localhost:8000/v1",
-        api_key="text",
+        model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
+        base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
+        api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
         tiktoken_enabled=False
         # dimensions=1024
     )
