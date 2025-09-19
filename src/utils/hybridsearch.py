@@ -148,9 +148,9 @@ class HybridRetrieverPipeline:
 
         return [ r.index for r in rerank_results]
 
-    def search(self, query: str, k: int = 50):
+    def search(self, query: str, embedding_k: int = 100):
         """Retrieve with ensemble, then rerank with Cohere."""
-        ensemble = self.get_ensemble(k=k)
+        ensemble = self.get_ensemble(k=embedding_k)
         docs = ensemble.invoke(query, config={})
         docs_reranked = self.rerank_func(
             query, 

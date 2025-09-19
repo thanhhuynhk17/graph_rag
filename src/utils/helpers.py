@@ -183,13 +183,12 @@ def rerank_novita(
 
     return response.json()
 
-import cohere
-
-def cohere_rerank(query: str, documents: list[str]):
-    client = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
-    response = client.rerank(
-        model="rerank-english-v3.0",
-        query=query,
-        documents=documents
-    )
-    return [{"doc": r.document, "score": r.relevance_score} for r in response.results]
+# import cohere
+# def cohere_rerank(query: str, documents: list[str]):
+#     client = cohere.ClientV2(api_key=os.getenv("OPENAI_API_MODEL_NAME_RERANK", None))
+#     response = client.rerank(
+#         model=os.getenv("OPENAI_API_MODEL_NAME_RERANK", None),
+#         query=query,
+#         documents=documents
+#     )
+#     return [{"doc": r.document, "score": r.relevance_score} for r in response.results]

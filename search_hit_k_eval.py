@@ -53,6 +53,11 @@ def benchmark_df(df: pd.DataFrame, ks=(1, 5, 20)):
             if any(r["_id"] == ground_truth_id for r in retrieved_k):
                 results[f"hit@{k}"] += 1
                 hit_any = True
+        # for k in ks:
+        #     retrieved = hybrid_search(query, k)
+        #     if any(r["_id"] == ground_truth_id for r in retrieved):
+        #         results[f"hit@{k}"] += 1
+        #         hit_any = True
         
         if not hit_any:
             results["missed"].append({
