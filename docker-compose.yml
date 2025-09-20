@@ -1,0 +1,32 @@
+services:
+  neo4j:
+    image: neo4j:5.26.8 # LTS version
+    container_name: neo4j
+    volumes:
+        - ./neo4j/logs:/logs
+        # - ./neo4j/config:/config
+        - ./neo4j/data:/data
+        - ./neo4j/plugins:/plugins
+    ports:
+      - 7473:7473
+      - 7474:7474
+      - 7687:7687
+    environment:
+        - NEO4J_AUTH=neo4j/12345678 # user/password
+        - NEO4J_PLUGINS=["graph-data-science"]
+    # restart: unless-stopped
+  graph_rag_mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: graph_rag_mcp
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"   # MCP server
+    depends_on:
+      - neo4j
+    # restart: unless-stopped
+
+volumes:
+  neo4j_data:

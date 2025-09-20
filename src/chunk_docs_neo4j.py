@@ -4,8 +4,7 @@ load_dotenv()
 
 import asyncio
 import logging
-import glob
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from utils.helpers import process_and_embed_to_neo4j
 import argparse
 
@@ -44,14 +43,14 @@ async def main():
         model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
         base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
         api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
-        tiktoken_enabled=False
-        # dimensions=1024
+        dimensions=int(os.getenv("EMBED_DIM")),
+        tiktoken_enabled=False,
     )
 
-    neo4j_url = "bolt://localhost:7687"
-    username = "neo4j"
-    password = "12345678"
-    database = "neo4j"
+    neo4j_url = os.getenv("NEO4J_URI")
+    username = os.getenv("NEO4J_USER")
+    password = os.getenv("NEO4J_PASSWORD")
+    database = os.getenv("NEO4J_DATABASE")
     index_name = "vietnamese_docs"
 
     tasks = []

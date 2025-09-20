@@ -48,43 +48,37 @@ from langchain.retrievers import EnsembleRetriever
 from neo4j import GraphDatabase
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
-from langchain_core.runnables import ConfigurableField
-
-import cohere
 
 from typing import List, Literal, Callable, Dict, Any
 from pydantic import BaseModel, Field
-
-# import sys
-# from pathlib import Path
-# # Get current script's parent directory (adjust as needed)
-# module_path = Path(__file__).resolve().parent
-# print(module_path)
-# sys.path.append(str(module_path))
 from src.utils.helpers import normalize_vnese
 
 class HybridSearchQuery(BaseModel):
     """
-    Used to retrieve relevant information from the knowledge base.
+    Schema for retrieving restaurant and dish information 
+    from the knowledge base.
+
     Supports:
-    - Vietnam geographic data (provinces, communes)
-    - E-commerce product data (titles, specifications, promotions, etc.)
-    
-    Increasing the value of 'k' can help retrieve more relevant documents.
+    - Restaurant details (name, location, cuisine, opening hours, etc.)
+    - Dish details (ingredients, cooking style, dietary info, etc.)
+
+    Increasing 'k' allows fetching more candidate results for better coverage.
     """
     query: str = Field(
         ...,
         description=(
             "Natural language search query. "
-            "Can be about Vietnamese provinces/communes OR e-commerce products."
+            "Can be about restaurants (location, cuisine type, opening hours) "
+            "or dishes (name, ingredients, dietary preferences, cooking style)."
         )
     )
-    k: Literal[8, 16] = Field(
+    k: Literal[30,50] = Field(
         ...,
         description=(
             "Number of top results to retrieve. "
-            "Use 8 for a smaller, faster search; 16 for broader coverage. "
-            "If results are empty, increase k. If still empty, conclude data may be missing."
+            "Use 30 for a smaller, faster search; 50 for broader coverage. "
+            "If results are empty, increase k. If still empty, the requested restaurant or dish "
+            "may not exist in the database."
         )
     )
 
@@ -100,7 +94,7 @@ class HybridRetrieverPipeline:
     def __init__(
         self,
         bm25_preprocessing_func: Callable,
-        rerank_func: Callable[[str, List[str]], List[Dict[str, Any]]]
+        rerank_func: Callable[[str, List[str], int], List[Dict[str, Any]]]
     ):
         load_dotenv()
 
@@ -121,45 +115,35 @@ class HybridRetrieverPipeline:
         # )
         # self.rerank_model = os.getenv("OPENAI_API_MODEL_NAME_RERANK", None)
 
-    def get_ensemble(self, k: int):
+    def get_ensemble(self, k: int , is_bm25_enable=True):
         """Get an ensemble retriever with top-k results."""
         self.bm25.k = k
         neo4j_retriever = load_neo4j_retriever(k=k)
+        if is_bm25_enable:
+            return EnsembleRetriever(
+                retrievers=[self.bm25, neo4j_retriever],
+                id_key="id"
+            )
+            
         return EnsembleRetriever(
             retrievers=[neo4j_retriever], # embedding only for now to test performance
-            # retrievers=[self.bm25, neo4j_retriever],
-            # weights=[0.5, 0.5],
             id_key="id"
         )
-
-    def rerank(self, query: str, docs: List[Dict[str, Any]]):
-        """Rerank retrieved docs with Cohere Rerank v2.
         
-            Return: reranked indexes
-        """
-        if not docs:
-            return []
 
-        rerank_results = self.reranker.rerank(
-            model=self.rerank_model,
-            query=query,
-            documents=docs)
-        rerank_results = rerank_results.results # [{index, relevance_score, document["text"]},...]
-
-        return [ r.index for r in rerank_results]
-
-    def search(self, query: str, embedding_k: int = 100):
+    def search(self, query: str, embedding_k: int = 100, k: int = 5, is_bm25_enable=True):
         """Retrieve with ensemble, then rerank with Cohere."""
-        ensemble = self.get_ensemble(k=embedding_k)
+        ensemble = self.get_ensemble(k=embedding_k, is_bm25_enable=is_bm25_enable)
         docs = ensemble.invoke(query, config={})
         docs_reranked = self.rerank_func(
             query, 
-            [ d.page_content.strip() for d in docs]
+            [ d.page_content.strip() for d in docs],
+            top_n=k
         )
         
-        if isinstance(docs_reranked,dict):
+        if isinstance(docs_reranked,dict): # novita
             reranked_idxes = [ r["index"] for r in docs_reranked["results"]]
-        else:
+        else: # cohere
             reranked_idxes = [ r.index for r in docs_reranked.results]
         
         # Reorder origin_documents based on rerank_results order
@@ -174,7 +158,8 @@ def load_neo4j_retriever(k: int = 50):
         model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
         base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
         api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
-        tiktoken_enabled=False
+        tiktoken_enabled=False,
+        dimensions=int(os.getenv("EMBED_DIM"))
     )
 
     text_node_properties = ["text"]
@@ -213,6 +198,7 @@ def load_neo4j_retriever(k: int = 50):
     return store.as_retriever(search_type="similarity", search_kwargs={"k": k})
 
 
+# FIXME: write a Cypher query to fetch all columns
 def load_neo4j_documents() -> List[Document]:
     if not all([NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD]):
         raise EnvironmentError("Missing Neo4j credentials.")
@@ -223,7 +209,7 @@ def load_neo4j_documents() -> List[Document]:
     def get_all_documents(tx):
         query = """
         MATCH (n:Chunk)
-        RETURN n.id AS id, n.text AS page_content, n.source AS source
+        RETURN n.id AS id, n._id as _id, n.text AS page_content, n.source AS source
         """
         return tx.run(query).data()
 
@@ -234,7 +220,11 @@ def load_neo4j_documents() -> List[Document]:
     return [
         Document(
             page_content=doc["page_content"],
-            metadata={"source": doc["source"], "id": doc["id"]}
+            metadata={
+                "id": doc["id"],
+                "source": doc["source"], 
+                "_id": doc["_id"]
+                }
         )
         for doc in neo4j_docs
     ]
@@ -244,27 +234,49 @@ def bm25_preprocessing_func(text: str) -> List[str]:
     normalized = normalize_vnese(text).lower()
     return normalized.split()
 
-from langchain_core.tools import tool
-from src.utils.helpers import rerank_novita
-pipeline = HybridRetrieverPipeline(
-    bm25_preprocessing_func=bm25_preprocessing_func,
-    rerank_func=rerank_novita
-)
+from src.utils.helpers import rerank_novita, rerank_cohere # for vllm localhost
+# global variable
+_pipeline = None  
+def get_pipeline():
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = HybridRetrieverPipeline(
+            bm25_preprocessing_func=bm25_preprocessing_func,
+            rerank_func=rerank_novita # rerank_novita / rerank_cohere
+        )
+    return _pipeline
 
-@tool(args_schema=HybridSearchQuery, response_format="content_and_artifact")
-def hybrid_search(**kwargs):
-    query = kwargs.get("query")
-    k = kwargs.get("k")
-    if not query:
-        raise ValueError("Query must not be None")
+def run_hybrid_search(query: str, k: int, is_bm25_enable: bool):
+    """
+    Perform hybrid search using BM25 and vector-based retrieval.
 
-    return kwargs, kwargs
+    This function normalizes the input query (supports Vietnamese text),
+    loads the hybrid search pipeline, and retrieves relevant documents
+    by combining BM25 lexical search with dense vector embeddings.
 
-def run_hybrid_search(query, k):
+    Args:
+        query (str): The search query string. Must not be None or empty.
+        k (int): Number of top results to return.
+        is_bm25_enable (bool): Whether to include BM25 in the hybrid search.
+            - True → Combine BM25 and embedding search.
+            - False → Use embedding-only retrieval.
+
+    Returns:
+        list[dict]: A list of search results, where each result is a dictionary
+        containing metadata (e.g., document ID, score, content).
+
+    Raises:
+        ValueError: If `query` is None or empty.
+    """
     if not query:
         raise ValueError("Query must not be None")
 
     query = normalize_vnese(query)
-    results = pipeline.search(query, 100)
-    
-    return results[:k]
+    pipeline = get_pipeline()
+    results = pipeline.search(
+        query,
+        embedding_k=100, # fixed
+        k=k,
+        is_bm25_enable=is_bm25_enable,
+    )
+    return results

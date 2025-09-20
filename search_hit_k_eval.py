@@ -25,12 +25,14 @@ def hybrid_search(prompt: str, k: int):
     Trả về list top-k kết quả (dict với _id).
     Bạn sẽ thay bằng search thực tế.
     """
-    results = run_hybrid_search(prompt, k)
+    results = run_hybrid_search(prompt, k, is_bm25_enable=False)
     return [{"_id": r.metadata["_id"]} for r in results]
 
 # --------------------------
 # Benchmark for dataframe
 # --------------------------
+import time
+
 def benchmark_df(df: pd.DataFrame, ks=(1, 5, 20)):
     results = {f"hit@{k}": 0 for k in ks}
     results["missed"] = []   # danh sách lưu id/query bị miss
@@ -43,22 +45,24 @@ def benchmark_df(df: pd.DataFrame, ks=(1, 5, 20)):
         
         query = get_random_prompt(product_name)
         print(f"[TEST] id={ground_truth_id} | query='{query}'")
-
+        # đo thời gian bắt đầu
+        start = time.perf_counter()
+        
         hit_any = False
         max_k = max(ks)
         # hybrid_search max_k, then select k_i for saving tokens
+        # only use with reranker
+        # run hybrid_search() on for-loop if benchmark with embedding only
         retrieved = hybrid_search(query, max_k)
         for k in ks:
             retrieved_k = retrieved[:k]
             if any(r["_id"] == ground_truth_id for r in retrieved_k):
                 results[f"hit@{k}"] += 1
                 hit_any = True
-        # for k in ks:
-        #     retrieved = hybrid_search(query, k)
-        #     if any(r["_id"] == ground_truth_id for r in retrieved):
-        #         results[f"hit@{k}"] += 1
-        #         hit_any = True
         
+        elapsed = time.perf_counter() - start
+        print(f"[TIME] query took {elapsed:.3f}s")
+
         if not hit_any:
             results["missed"].append({
                 "id": ground_truth_id,

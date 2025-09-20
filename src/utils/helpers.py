@@ -1,21 +1,6 @@
-
-
-# def docx_to_md(file_path: str) -> str:
-#     from langchain_community.document_loaders import Docx2txtLoader
-#     from markdownify import markdownify as md
-
-#     # Step 1: Load the DOCX file
-#     loader = Docx2txtLoader(file_path)
-#     docs = loader.load()
-
-#     # Step 2: Convert each document content to markdown
-#     markdown_texts = [md(doc.page_content) for doc in docs]
-
-#     return "\n".join(markdown_texts)
-
 import requests
 import unicodedata
-
+import re
 # VietnameseToneNormalization.md
 # https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
 
@@ -37,42 +22,67 @@ TONE_NORM_VI = {
     'ụy': 'uỵ', 'Ụy': 'Uỵ', 'ỤY': 'UỴ'
     }
 
-import unicodedata
 
 def normalize_vnese(text):
     for i, j in TONE_NORM_VI.items():
         text = text.replace(i, j)
-    # Normalize input text to NFC
-    text = unicodedata.normalize("NFC", text)
+    # Remove control characters (ASCII 0–31, plus DEL 127)
+    text = re.sub(r'[\x00-\x1F\x7F]', '', text)
     # normalize spacing
     text = text.replace('\xa0', ' ')
+    # Normalize input text to NFC
+    text = unicodedata.normalize("NFC", text)
     return text
 
 from langchain_community.document_loaders import Docx2txtLoader, JSONLoader, CSVLoader
 from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_neo4j import Neo4jVector
+
+import cohere # reranker
+
+import pandas as pd
 import os
 
 def text_to_chunks(file_path: str, file_ext: str, chunk_size=512, chunk_overlap=0):
     print("🔄 Loading documents...")
     print("file_ext", file_ext)
     if file_ext == "csv":
-        loader = CSVLoader(file_path,
-            csv_args={
-                'delimiter': ',',
-                'quotechar': '"'
-            },
-            content_columns=["combined_info"],
-            metadata_columns=["_id", "url"],
-            encoding='utf-8'
-        )
-        documents = loader.load()
-        for d in documents:
-            d.page_content = normalize_vnese(d.page_content)
+        try:
+            # get all columns
+            df = pd.read_csv(file_path, nrows=1, encoding="utf-8")
+            all_columns = df.columns.tolist()
+            # Define which column will be the content
+            content_column = "combined_info"
+            # All other columns go into metadata (exclude content_column)
+            metadata_columns = [col for col in all_columns if col != content_column]
+            
+            loader = CSVLoader(file_path,
+                csv_args={
+                    'delimiter': ',',
+                    'quotechar': '"'
+                },
+                content_columns=[content_column], # only this column goes into .page_content
+                metadata_columns=metadata_columns, # only this column goes into metadata
+                encoding='utf-8'
+            )
+            documents = loader.load()
+            for d in documents:
+                if d.page_content.startswith("combined_info:"):
+                    d.page_content = d.page_content.split("combined_info:", 1)[1].strip()
+
+                # chuẩn hóa văn bản
+                d.page_content = normalize_vnese(d.page_content)
+        
+        except Exception as e:
+            print(
+                f"[BENCHMARK ERROR] {e}\n"
+                "CSV must have:\n"
+                "- column 'combined_info' (for embedding)\n"
+                "- column '_id' (for benchmark purpose)"
+            )
 
     print("✂️ Splitting documents into chunks...")
-    splitter = CharacterTextSplitter(separator="\n\n",chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    splitter = CharacterTextSplitter(separator="\n",chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     docs = splitter.split_documents(documents)
     # for d in docs:
     #     d.page_content = f"{prefix_txt}\n\n{d.page_content}"
@@ -119,7 +129,7 @@ async def process_and_embed_to_neo4j(
     
     
     print(f"💾 Saving embeddings to Neo4j (DB: {database})...")
-    batch_size = 64
+    batch_size = 10
     for i in range(0, len(docs), batch_size):
         batch = docs[i : i + batch_size]
         
@@ -131,7 +141,7 @@ async def process_and_embed_to_neo4j(
             password=password,
             database=database,
             index_name=index_name,
-            # search_type="hybrid"
+            search_type="hybrid"
         )
 
     print(f"✅ Embedded {len(docs)} chunks to Neo4j vector store (index: {index_name})")
@@ -142,10 +152,10 @@ async def process_and_embed_to_neo4j(
 def rerank_novita(
     query: str,
     documents: list[str],
-    model: str = "baai/bge-reranker-v2-m3",
-    top_n: int = 5,
+    top_n: int,
+    base_url: str | None = None,
     api_key: str | None = None,
-    base_url: str = "https://api.novita.ai/openai/v1/rerank"
+    model: str | None = None
 ) -> list[dict]:
     """
     Call Novita's rerank API.
@@ -165,6 +175,14 @@ def rerank_novita(
         api_key = os.getenv("OPENAI_API_KEY_EMBED")
         if not api_key:
             raise ValueError("API key not provided and OPENAI_API_KEY_EMBED not set in .env")
+    if base_url is None:
+        base_url = os.getenv("OPENAI_BASE_URL_RERANK")
+        if not base_url:
+            raise ValueError("API key not provided and OPENAI_BASE_URL_RERANK not set in .env")
+    if model is None:
+        model = os.getenv("OPENAI_API_MODEL_NAME_RERANK")
+        if not model:
+            raise ValueError("API key not provided and OPENAI_API_MODEL_NAME_RERANK not set in .env")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -178,17 +196,24 @@ def rerank_novita(
         "top_n": top_n
     }
 
-    response = requests.post(base_url, headers=headers, json=payload)
+    response = requests.post(f"{base_url}/rerank", headers=headers, json=payload)
     response.raise_for_status()  # raise error if status != 200
 
     return response.json()
 
-# import cohere
-# def cohere_rerank(query: str, documents: list[str]):
-#     client = cohere.ClientV2(api_key=os.getenv("OPENAI_API_MODEL_NAME_RERANK", None))
-#     response = client.rerank(
-#         model=os.getenv("OPENAI_API_MODEL_NAME_RERANK", None),
-#         query=query,
-#         documents=documents
-#     )
-#     return [{"doc": r.document, "score": r.relevance_score} for r in response.results]
+def rerank_cohere(
+    query: str,
+    documents: list[str],
+    top_n: int
+    ):
+    client = cohere.ClientV2(
+        api_key=os.getenv("OPENAI_API_KEY_RERANK", None),
+        base_url=os.getenv("OPENAI_BASE_URL_RERANK", None)
+    )
+    response = client.rerank(
+        model=os.getenv("OPENAI_API_MODEL_NAME_RERANK", None),
+        query=query,
+        documents=documents,
+        top_n=top_n
+    ) # response.results is a list of {index, relevance_score, document["text"]}
+    return response
