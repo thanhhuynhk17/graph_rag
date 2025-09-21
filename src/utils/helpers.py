@@ -1,6 +1,8 @@
 import requests
 import unicodedata
 import re
+import pandas as pd
+from underthesea import word_tokenize
 # VietnameseToneNormalization.md
 # https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
 
@@ -33,6 +35,57 @@ def normalize_vnese(text):
     # Normalize input text to NFC
     text = unicodedata.normalize("NFC", text)
     return text
+
+def load_excel(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"CSV file not found: {path}")
+    df = pd.read_csv(path)
+    # Normalize current_price
+    df["current_price"] = (
+        df["current_price"]
+        .astype(str)
+        .str.replace(r"[^\d]", "", regex=True)
+        .replace("", None)
+    )
+    df["current_price"] = df["current_price"].astype(float).dropna().astype("Int64").astype(str) + " vnd"
+    # df = add_column_names_to_values(df)
+    return df
+
+def convert_table_to_rows(df: pd.DataFrame) -> list[str]:
+    result_list = []
+    for _, row in df.iterrows():
+        row_string = ", ".join(str(v) for v in row)
+        result_list.append(re.sub(r'<[^>]*>|\s+', ' ', row_string).strip())
+    return result_list
+
+def remove_stopwords_vi(text: str, path_documents_vi: str='stopwords-vietnamese.txt') -> str:
+    if not os.path.exists(path_documents_vi):
+        raise FileNotFoundError(f"Stopwords file not found: {path_documents_vi}")
+    
+    tokens = text.split(',')
+    id_str, link_str, name_str = tokens[:3]
+    content = ','.join(tokens[3:])
+    
+    stop_words = set(open(path_documents_vi, encoding="utf-8").read().splitlines())
+    filtered_tokens = [w.strip() for w in word_tokenize(content, format="text").split(',') if w.strip().lower() not in stop_words]
+    
+    return f"{id_str},{link_str},{name_str}," + ', '.join(filtered_tokens)
+
+def normalize_record(text: str, fix_inch_heu=False) -> str:
+    if not text:
+        return text
+    text = re.sub(r'<.*?>', ' ', text).replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+    text = re.sub(r'\b[nN][aA][nN]\b', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def run_preprocess_sequences(data_source_path: str, stopwords_path: str = "./src/data/stopwords-vietnamese.txt") -> list[str]:
+    
+    df = load_excel(data_source_path)
+    sequences = convert_table_to_rows(df)
+    sequences = [remove_stopwords_vi(seq, stopwords_path) for seq in sequences]
+    sequences = [str(normalize_record(seq)).lower() for seq in sequences]
+    return sequences
 
 from langchain_community.document_loaders import Docx2txtLoader, JSONLoader, CSVLoader
 from langchain.text_splitter import CharacterTextSplitter
@@ -201,11 +254,13 @@ def rerank_novita(
 
     return response.json()
 
+from typing import List, Dict, Any
+
 def rerank_cohere(
     query: str,
     documents: list[str],
     top_n: int
-    ):
+    )->Dict:
     client = cohere.ClientV2(
         api_key=os.getenv("OPENAI_API_KEY_RERANK", None),
         base_url=os.getenv("OPENAI_BASE_URL_RERANK", None)
@@ -216,4 +271,16 @@ def rerank_cohere(
         documents=documents,
         top_n=top_n
     ) # response.results is a list of {index, relevance_score, document["text"]}
+    
+    results: list[dict] = [
+        {
+            "index": r.index,
+            "relevance_score": r.relevance_score,
+            "text": r.document["text"] if isinstance(r.document, dict) else r.document
+        }
+        for r in response.results
+    ]
+    response={
+        "results" : results
+    }
     return response

@@ -229,10 +229,15 @@ def load_neo4j_documents() -> List[Document]:
         for doc in neo4j_docs
     ]
 
+from src.utils.helpers import run_preprocess_sequences
 
 def bm25_preprocessing_func(text: str) -> List[str]:
-    normalized = normalize_vnese(text).lower()
-    return normalized.split()
+    normalized = normalize_vnese(text).lower().split()
+    # normalized = run_preprocess_sequences("./src/data/hoanghamobile_with_summary.csv")
+    
+    print(f"Process seq: {normalized}")
+    
+    return normalized
 
 from src.utils.helpers import rerank_novita, rerank_cohere # for vllm localhost
 # global variable
@@ -242,7 +247,7 @@ def get_pipeline():
     if _pipeline is None:
         _pipeline = HybridRetrieverPipeline(
             bm25_preprocessing_func=bm25_preprocessing_func,
-            rerank_func=rerank_novita # rerank_novita / rerank_cohere
+            rerank_func=rerank_cohere # rerank_novita / rerank_cohere
         )
     return _pipeline
 

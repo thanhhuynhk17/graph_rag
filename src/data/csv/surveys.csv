@@ -1,0 +1,5 @@
+customer_id,type,value,weight
+C001,tag,Đồ béo,5
+C001,time_slot,18:00-20:30,4
+C001,day_of_week,Mon,3
+C002,tag,Nhạt,4

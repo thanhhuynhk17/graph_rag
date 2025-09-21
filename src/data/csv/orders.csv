@@ -1,0 +1,2 @@
+order_id,customer_id,dish_id,order_time,people_count,unit_price,quantity
+O1,C100,D001,2025-09-21T12:00:00,2,145000,1

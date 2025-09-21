@@ -7,6 +7,7 @@ services:
         # - ./neo4j/config:/config
         - ./neo4j/data:/data
         - ./neo4j/plugins:/plugins
+        - ./src/data/csv:/var/lib/neo4j/import # <-- new
     ports:
       - 7473:7473
       - 7474:7474
@@ -14,6 +15,8 @@ services:
     environment:
         - NEO4J_AUTH=neo4j/12345678 # user/password
         - NEO4J_PLUGINS=["graph-data-science"]
+        - NEO4J_dbms_security_procedures_allowlist=gds.*,apoc.* # <-- new
+        - NEO4J_apoc_import_file_enabled=true # <-- new
     # restart: unless-stopped
   graph_rag_mcp:
     build:

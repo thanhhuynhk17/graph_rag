@@ -1,0 +1,2 @@
+staff_id,customer_id,dish_id,reason,score
+S001,C001,D002,"Khách thích món nhạt",0.9
