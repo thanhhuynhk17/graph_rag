@@ -1,10 +1,10 @@
 services:
   neo4j:
     image: neo4j:5.26.8 # LTS version
-    container_name: neo4j
+    container_name: neo4j_db
     volumes:
         - ./neo4j/logs:/logs
-        # - ./neo4j/config:/config
+        - ./neo4j/config:/config
         - ./neo4j/data:/data
         - ./neo4j/plugins:/plugins
     ports:
@@ -12,9 +12,23 @@ services:
       - 7474:7474
       - 7687:7687
     environment:
-        - NEO4J_AUTH=neo4j/12345678 # user/password
-        - NEO4J_PLUGINS=["graph-data-science"]
-    # restart: unless-stopped
+        - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD} # user/password
+        # Install APOC and GDS plugins
+        - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+        # Allow APOC & GDS procedures
+        - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+        - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+
+        # Enable APOC file import/export
+        - NEO4J_apoc_import_file_enabled=true
+        - NEO4J_apoc_export_file_enabled=true
+        - NEO4J_apoc_import_file_use__neo4j__config=true
+
+        # Optional: Enable memory limits if needed
+        - NEO4J_server_memory_heap_initial__size=1G
+        - NEO4J_server_memory_heap_max__size=2G
+        - NEO4J_server_memory_pagecache_size=512M
+    restart: unless-stopped
   graph_rag_mcp:
     build:
       context: .

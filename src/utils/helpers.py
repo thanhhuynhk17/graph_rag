@@ -205,7 +205,7 @@ def rerank_cohere(
     query: str,
     documents: list[str],
     top_n: int
-    ):
+    )->list[dict]:
     client = cohere.ClientV2(
         api_key=os.getenv("OPENAI_API_KEY_RERANK", None),
         base_url=os.getenv("OPENAI_BASE_URL_RERANK", None)

@@ -80,18 +80,18 @@ Create a `.env` file in the project root with the following variables:
 
 ```bash
 # Embedding service (Qwen3-0.6B)
-OPENAI_BASE_URL_EMBED=https://api.novita.ai/openai/v1 # openai compatible
-OPENAI_API_KEY_EMBED=
-OPENAI_API_MODEL_NAME_EMBED=qwen/qwen3-embedding-8b # for vllm: Qwen/Qwen3-Embedding-0.6B
-EMBED_DIM=4096 # 1024 for Qwen3-0.6B
+OPENAI_BASE_URL_EMBED=http://0.0.0.0:8080/v1 # openai compatible
+OPENAI_API_KEY_EMBED=dummy_text
+OPENAI_API_MODEL_NAME_EMBED=Qwen/Qwen3-Embedding-0.6B # for vllm: Qwen/Qwen3-Embedding-0.6B
+EMBED_DIM=1024 # 1024 for Qwen3-0.6B
 
 # Reranker service (BGE-Reranker)
-OPENAI_BASE_URL_RERANK=https://api.novita.ai/openai/v1
-OPENAI_API_KEY_RERANK=
-OPENAI_API_MODEL_NAME_RERANK=baai/bge-reranker-v2-m3 # for vllm: BAAI/bge-reranker-v2-m3
+OPENAI_BASE_URL_RERANK=http://0.0.0.0:8081
+OPENAI_API_KEY_RERANK=dummy_text
+OPENAI_API_MODEL_NAME_RERANK=BAAI/bge-reranker-v2-m3 # for vllm: BAAI/bge-reranker-v2-m3
 
 # Neo4j database
-NEO4J_URI=bolt://127.0.0.1:7687
+NEO4J_URI=bolt://0.0.0.0:7687 # docker network, docker compose config
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=12345678
 NEO4J_DATABASE=neo4j
@@ -116,10 +116,13 @@ services:
     command: >
       --model Qwen/Qwen3-Embedding-0.6B
       --task embed
-      --dtype bfloat16
+      --dtype float16
       --max-model-len 8192
-      --port 8000
+      --host 0.0.0.0
+      --port 8080
+      --enforce-eager
       --gpu-memory-utilization 0.45
+      --hf_overrides '{"matryoshka_dimensions":[1024]}'
     # restart: unless-stopped
     deploy:
       resources:
@@ -128,10 +131,9 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
-  reranker-service:
+  bge-reranker:
     image: vllm/vllm-openai:latest
-    container_name: vllm-qwen3-reranker
+    container_name: vllm-bge-reranker
     network_mode: host
     runtime: nvidia
     # environment:
@@ -142,10 +144,12 @@ services:
     command: >
       --model BAAI/bge-reranker-v2-m3
       --task score
-      --dtype bfloat16
+      --dtype float16
       --max-model-len 8192
-      --port 8001
-      --gpu-memory-utilization 0.45
+      --host 0.0.0.0
+      --port 8081
+      --enforce-eager
+      --gpu-memory-utilization 0.3
     # restart: unless-stopped
     deploy:
       resources:
@@ -154,4 +158,32 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+  ### Qwen3-0.6B-Reranker broken!
+  # reranker-service:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: vllm-qwen3-reranker
+  #   network_mode: host
+  #   runtime: nvidia
+  #   # environment:
+  #   #   - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}  # Optional: Your HF token
+  #   volumes:
+  #     - ./models:/models  # Cache models
+  #   ipc: host  # Shared memory for PyTorch/vLLM
+  #   command: >
+  #     --model Qwen/Qwen3-Reranker-0.6B
+  #     --task score
+  #     --dtype float16
+  #     --max-model-len 8192
+  #     --port 8081
+  #     --hf_overrides '{"architectures": ["Qwen3ForSequenceClassification"],"classifier_from_token": ["no", "yes"],"is_original_qwen3_reranker": true}'
+  #     --enforce-eager
+  #     --gpu-memory-utilization 0.45
+  #   # restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
 ```
