@@ -80,18 +80,23 @@ Create a `.env` file in the project root with the following variables:
 
 ```bash
 # Embedding service (Qwen3-0.6B)
-OPENAI_BASE_URL_EMBED=http://0.0.0.0:8080/v1 # openai compatible
+# openai compatible
+OPENAI_BASE_URL_EMBED=http://localhost:8080/v1
 OPENAI_API_KEY_EMBED=dummy_text
-OPENAI_API_MODEL_NAME_EMBED=Qwen/Qwen3-Embedding-0.6B # for vllm: Qwen/Qwen3-Embedding-0.6B
-EMBED_DIM=1024 # 1024 for Qwen3-0.6B
+# for vllm: Qwen/Qwen3-Embedding-0.6B
+OPENAI_API_MODEL_NAME_EMBED=Qwen/Qwen3-Embedding-0.6B
+# 1024 for Qwen3-0.6B
+EMBED_DIM=1024
 
 # Reranker service (BGE-Reranker)
-OPENAI_BASE_URL_RERANK=http://0.0.0.0:8081
+OPENAI_BASE_URL_RERANK=http://localhost:8081
 OPENAI_API_KEY_RERANK=dummy_text
-OPENAI_API_MODEL_NAME_RERANK=BAAI/bge-reranker-v2-m3 # for vllm: BAAI/bge-reranker-v2-m3
+# for vllm: BAAI/bge-reranker-v2-m3
+OPENAI_API_MODEL_NAME_RERANK=BAAI/bge-reranker-v2-m3
 
 # Neo4j database
-NEO4J_URI=bolt://0.0.0.0:7687 # docker network, docker compose config
+# docker network, docker compose config
+NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=12345678
 NEO4J_DATABASE=neo4j
