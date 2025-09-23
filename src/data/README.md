@@ -168,6 +168,14 @@ staff_id,customer_id,dish_id,reason,score
 S001,C001,D002,"Khách thích món nhạt",0.9
 ```
 
+* customer_questions.csv
+
+```csv
+question_id,customer_id,text,intent_name,channel_name,created_at
+Q001,C001,"Món nào béo béo mà không cay?","fat_non_spicy","chat","2025-09-22T10:00:00"
+Q002,C002,"Tôi ăn chay, có món gì?",          "vegan",       "email","2025-09-22T11:00:00"
+```
+
 ## 4. Create Constraint and Index
 
 ```cypher
