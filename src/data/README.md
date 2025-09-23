@@ -58,9 +58,11 @@ C002,Trần Thị B,0903334444,b@mail.com,1985-11-20,female,
 * dishes.csv
 
 ```csv
-dish_id,type_of_food,name_of_food,how_to_prepare,taste,outstanding_fragrance,current_price,serves_min,serves_max
-D001,MÓN KHAI VỊ,Bánh xèo,"Đổ bột gạo, nước cốt dừa, chiên giòn",Đồ béo,Thơm nước cốt dừa,145000,2,3
-D002,MÓN CHÍNH,Cơm gà Hội An,"Gà luộc xé, cơm nấu nước luộc gà",Nhạt,Thơm gà,85000,1,2
+dish_id,type_of_food,name_of_food,how_to_prepare,main_ingredients,taste,outstanding_fragrance,current_price,number_of_people_eating
+D001,MÓN KHAI VỊ,Bánh xèo,"Đổ bột gạo pha nước cốt dừa, chiên vàng giòn cùng topping","Bột gạo, tôm, thịt ba chỉ, giá đỗ,...",Đồ béo,"Thơm và béo của nước cốt dừa hoà quyện cùng topping (tôm, thịt,..)","145,000",2-3
+D002,MÓN KHAI VỊ,Bánh khọt nước dừa,"Đổ bột gạo pha nước cốt dừa vào khuôn nhỏ, chiên giòn cùng topping","Bột  gạo, nước cốt dừa, tôm",Đồ béo,"Thơm và béo của nước cốt dừa hoà quyện cùng topping (tôm, thịt,..)","145,000",2-3
+D003,MÓN KHAI VỊ,Hến xúc bánh đa,"Hến xào hành, rau răm, ăn kèm bánh đa","Hến, rau răm, bánh đa","Đồ mặn, cay","Vị ngọt béo tự nhiên của hến, cay nhẹ của ớt và rau răm, tiêu","155,000",1-2
+D004,MÓN KHAI VỊ,Mực chiên giòn,"Mực tẩm bột chiên xù, chiên vàng","Mực, bột chiên",Đồ béo,"Mực tươi, béo của bột chiên giòn","175,000",2-3
 ```
 
 * ingredients.csv
@@ -179,21 +181,40 @@ Q002,C002,"Tôi ăn chay, có món gì?",          "vegan",       "email","2025-
 ## 4. Create Constraint and Index
 
 ```cypher
-// xóa sạch (test only)
+// Xóa sạch (test only)
 // MATCH (n) DETACH DELETE n;
 
-CREATE CONSTRAINT cust_id IF NOT EXISTS FOR (c:Customer) REQUIRE c.customer_id IS UNIQUE;
-CREATE CONSTRAINT dish_id IF NOT EXISTS FOR (d:Dish) REQUIRE d.dish_id IS UNIQUE;
-CREATE CONSTRAINT ing_name IF NOT EXISTS FOR (i:Ingredient) REQUIRE i.name IS UNIQUE;
-CREATE CONSTRAINT tag_name IF NOT EXISTS FOR (t:Tag) REQUIRE t.tag IS UNIQUE;
-CREATE CONSTRAINT bill_id IF NOT EXISTS FOR (b:Bill) REQUIRE b.bill_id IS UNIQUE;
-CREATE CONSTRAINT fb_id IF NOT EXISTS FOR (f:Feedback) REQUIRE f.feedback_id IS UNIQUE;
-CREATE CONSTRAINT promo_id IF NOT EXISTS FOR (p:Promotion) REQUIRE p.promo_id IS UNIQUE;
-CREATE CONSTRAINT staff_id IF NOT EXISTS FOR (s:Staff) REQUIRE s.staff_id IS UNIQUE;
+// Constraints
+CREATE CONSTRAINT cust_id   IF NOT EXISTS FOR (c:Customer)  REQUIRE c.customer_id IS UNIQUE;
+CREATE CONSTRAINT dish_id   IF NOT EXISTS FOR (d:Dish)      REQUIRE d.dish_id IS UNIQUE;
+CREATE CONSTRAINT ing_name  IF NOT EXISTS FOR (i:Ingredient) REQUIRE i.name IS UNIQUE;
+CREATE CONSTRAINT tag_name  IF NOT EXISTS FOR (t:Tag)        REQUIRE t.tag IS UNIQUE;
+CREATE CONSTRAINT bill_id   IF NOT EXISTS FOR (b:Bill)       REQUIRE b.bill_id IS UNIQUE;
+CREATE CONSTRAINT fb_id     IF NOT EXISTS FOR (f:Feedback)   REQUIRE f.feedback_id IS UNIQUE;
+CREATE CONSTRAINT promo_id  IF NOT EXISTS FOR (p:Promotion)  REQUIRE p.promo_id IS UNIQUE;
+CREATE CONSTRAINT staff_id  IF NOT EXISTS FOR (s:Staff)      REQUIRE s.staff_id IS UNIQUE;
 
-// index nhanh
+// Index
 CREATE INDEX bill_cust IF NOT EXISTS FOR (b:Bill) ON (b.customer_id);
 CREATE INDEX fb_target IF NOT EXISTS FOR (f:Feedback) ON (f.target_type, f.target_id);
+
+// Index mới cho Dish
+CREATE INDEX dish_name   IF NOT EXISTS FOR (d:Dish) ON (d.name_of_food);
+CREATE INDEX dish_price  IF NOT EXISTS FOR (d:Dish) ON (d.current_price);
+CREATE INDEX dish_type   IF NOT EXISTS FOR (d:Dish) ON (d.type_of_food);
+
+// Index trên property của relationship type WRONG_DISH
+CREATE INDEX wrong_dish_value IF NOT EXISTS
+FOR ()-[r:WRONG_DISH]-() ON (r.value);
+
+CREATE INDEX IF NOT EXISTS FOR (b:Bill) ON (b.bill_id);
+CREATE INDEX IF NOT EXISTS FOR (f:Feedback) ON (f.feedback_id);
+
+CREATE CONSTRAINT issue_name_unique IF NOT EXISTS
+FOR (i:Issue) REQUIRE i.name IS UNIQUE;
+
+CREATE INDEX issue_name_idx IF NOT EXISTS
+FOR (i:Issue) ON (i.name);
 ```
 
 * check file csv update from ./src/data/csv to import
@@ -206,7 +227,7 @@ result:
 
 ```text
 bill_items.csv  customer_promo.csv  dish_ingredient.csv  dishes.csv     ingredients.csv  promotions.csv  suggestions.csv  tags.csv
-bills.csv       customers.csv       dish_tag.csv         feedbacks.csv  orders.csv       staff.csv       surveys.csv
+bills.csv       customers.csv       dish_tag.csv         feedbacks.csv  orders.csv       staff.csv       surveys.csv      ...
 ```
 
 ## 5. Load data to Neo4j
@@ -218,10 +239,16 @@ LOAD CSV WITH HEADERS FROM 'file:///customers.csv' AS r
 CREATE (c:Customer) SET c = r, c.dob = date(r.dob);
 
 LOAD CSV WITH HEADERS FROM 'file:///dishes.csv' AS r
-CREATE (d:Dish) SET d = r,
-  d.current_price = toInteger(r.current_price),
-  d.serves_min    = toInteger(r.serves_min),
-  d.serves_max    = toInteger(r.serves_max);
+CREATE (d:Dish)
+SET d.dish_id              = r.dish_id,
+    d.type_of_food         = r.type_of_food,
+    d.name_of_food         = r.name_of_food,
+    d.how_to_prepare       = r.how_to_prepare,
+    d.main_ingredients     = r.main_ingredients,
+    d.taste                = r.taste,
+    d.outstanding_fragrance= r.outstanding_fragrance,
+    d.current_price        = toInteger(REPLACE(r.current_price, ",","")),
+    d.number_of_people_eating = r.number_of_people_eating;
 
 LOAD CSV WITH HEADERS FROM 'file:///ingredients.csv' AS r
 MERGE (i:Ingredient {name: r.name});
@@ -243,40 +270,21 @@ CREATE (p:Promotion) SET p = r,
 
 LOAD CSV WITH HEADERS FROM 'file:///staff.csv' AS r
 CREATE (s:Staff) SET s = r;
+
 ```
 
 ### 5.2. Relationship master-data
 
 ```cypher
-LOAD CSV WITH HEADERS FROM 'file:///customers.csv' AS r
-CREATE (c:Customer) SET c = r, c.dob = date(r.dob);
-
-LOAD CSV WITH HEADERS FROM 'file:///dishes.csv' AS r
-CREATE (d:Dish) SET d = r,
-  d.current_price = toInteger(r.current_price),
-  d.serves_min    = toInteger(r.serves_min),
-  d.serves_max    = toInteger(r.serves_max);
-
-LOAD CSV WITH HEADERS FROM 'file:///ingredients.csv' AS r
-MERGE (i:Ingredient {name: r.name});
-
-LOAD CSV WITH HEADERS FROM 'file:///tags.csv' AS r
-MERGE (t:Tag {tag: r.tag});
+LOAD CSV WITH HEADERS FROM 'file:///bill_items.csv' AS r
+MATCH (b:Bill {bill_id: r.bill_id})
+MATCH (d:Dish {dish_id: r.dish_id})
+MERGE (b)-[:CONTAINS {quantity: toInteger(r.quantity), unit_price: toInteger(r.unit_price)}]->(d);
 
 LOAD CSV WITH HEADERS FROM 'file:///bills.csv' AS r
-CREATE (b:Bill) SET b = r,
-  b.create_date  = date(r.create_date),
-  b.total_amount = toInteger(r.total_amount),
-  b.people_count = toInteger(r.people_count);
-
-LOAD CSV WITH HEADERS FROM 'file:///promotions.csv' AS r
-CREATE (p:Promotion) SET p = r,
-  p.discount_pct = toFloat(r.discount_pct),
-  p.start_date   = date(r.start_date),
-  p.end_date     = date(r.end_date);
-
-LOAD CSV WITH HEADERS FROM 'file:///staff.csv' AS r
-CREATE (s:Staff) SET s = r;
+MATCH (c:Customer {customer_id: r.customer_id})
+MATCH (b:Bill     {bill_id: r.bill_id})
+MERGE (c)-[:PLACED]->(b);
 ```
 
 ### 5.3. Bill ⇄ Dish
@@ -300,7 +308,6 @@ MERGE (c)-[:PLACED]->(b);
 ### 5.5. Feedback (chung)
 
 ```cypher
-// tạo node
 LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS r
 CREATE (f:Feedback)
 SET f.feedback_id   = r.feedback_id,
@@ -311,25 +318,39 @@ SET f.feedback_id   = r.feedback_id,
     f.would_reorder = CASE r.would_reorder WHEN 'true' THEN true WHEN 'false' THEN false ELSE null END,
     f.created_at    = datetime(r.created_at);
 
-// rel Customer → Feedback
+
+// Customer → Feedback
 LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS r
 MATCH (c:Customer {customer_id: r.customer_id})
 MATCH (f:Feedback {feedback_id: r.feedback_id})
 MERGE (c)-[:WROTE]->(f);
 
-// rel Feedback → Dish
+// Feedback → Dish   (target_type = DISH)
 LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS r
 WITH r WHERE r.target_type = 'DISH'
 MATCH (f:Feedback {feedback_id: r.feedback_id})
 MATCH (d:Dish     {dish_id: r.target_id})
 MERGE (f)-[:ON_DISH]->(d);
 
-// rel Feedback → Bill
+// Feedback → Bill   (target_type = BILL)  -- chỉ 1 relationship
 LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS r
 WITH r WHERE r.target_type = 'BILL'
 MATCH (f:Feedback {feedback_id: r.feedback_id})
 MATCH (b:Bill     {bill_id: r.target_id})
-MERGE (f)-[:ON_BILL]->(b);
+MERGE (f)-[:ABOUT]->(b);          // <-- dùng duy nhất ABOUT
+
+// Customer → Bill  (FEEDBACK_BILL)
+LOAD CSV WITH HEADERS FROM 'file:///customer_feedback_bill.csv' AS row
+MATCH (c:Customer {customer_id: row.customer_id})
+MATCH (b:Bill {bill_id: row.bill_id})
+MERGE (c)-[:FEEDBACK_BILL]->(b);
+
+// (Tuỳ chọn) Feedback → Dish  (WRONG_DISH)
+LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS row
+WITH row WHERE row.feedback_id = 'FB001'   // demo
+MATCH (f:Feedback {feedback_id: row.feedback_id})
+MATCH (d:Dish {dish_id: 'D001'})
+MERGE (f)-[:WRONG_DISH {value: 1}]->(d);
 ```
 
 ### 5.6. Survey (sở thích/thói quen)
@@ -373,17 +394,11 @@ MERGE (s)-[:SUGGESTS {reason: r.reason, score: toFloat(r.score)}]->(d);
 ## 6. Quick Test
 
 ```cypher
-// 1 bill gồm những món gì?
-MATCH (b:Bill {bill_id: 'B001'})-[con:CONTAINS]->(d:Dish)
-RETURN d.name_of_food, con.quantity, con.unit_price;
-
-// Điểm TB món ăn
-MATCH (d:Dish)<-[:ON_DISH]-(f:Feedback)
-RETURN d.name_of_food, avg(f.rating) AS avg_star
-ORDER BY avg_star DESC;
-
-// Khách nào thích Đồ béo chưa ăn D002
-MATCH (c:Customer)-[:FOLLOWS]->(:Tag {tag: 'Đồ béo'})
-WHERE NOT (c)-[:PLACED]->(:Bill)-[:CONTAINS]->(:Dish {dish_id: 'D002'})
-RETURN c.full_name;
+MATCH (f:Feedback)
+OPTIONAL MATCH path=(f)-[:STARTS_WITH]->(p:Phrase)-[:NEXT*0..]->(q:Phrase)
+OPTIONAL MATCH (f)-[r]->(n)
+RETURN f, path, r, n
+LIMIT 100;
 ```
+
+![alt text](image.png)
