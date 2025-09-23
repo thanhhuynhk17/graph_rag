@@ -57,13 +57,13 @@ Final scores:
 
 ```bash
 pip install uv
-uv pip install -r requirements.txt
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
 ```
 
 Run the MCP server
 
 ```bash
-uv run python -m src.mcp_server
+uv run uvicorn src.mcp_server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ## Docker
