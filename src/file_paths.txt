@@ -1,1 +1,1 @@
-src/data/comque_new.csv
+src/data/csv/dishes.csv

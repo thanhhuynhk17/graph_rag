@@ -12,7 +12,6 @@ from underthesea import (
 )
 from pyvi import ViTokenizer, ViPosTagger
 
-
 class AbbreviationProcessor:
     """
     Một class duy nhất:

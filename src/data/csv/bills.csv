@@ -1,3 +1,0 @@
-bill_id,customer_id,create_date,total_amount,people_count,payment_method,status
-B001,C001,2025-09-21,145000,2,cash,completed
-B002,C002,2025-09-21,85000,1,card,completed

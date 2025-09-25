@@ -19,3 +19,4 @@ transformers==4.56.2
 underthesea
 sentence_transformers
 tabulate
+pyvi

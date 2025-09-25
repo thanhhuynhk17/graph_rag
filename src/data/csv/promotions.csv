@@ -1,2 +1,4 @@
-promo_id,desc,discount_pct,start_date,end_date
-P001,Giảm 10% món khai vị,10,2025-09-01,2025-09-30
+promotion_id,apply_date,description
+PROMO01,2025-10-01,"Giảm 10% set gia đình"
+PROMO02,2025-10-02,"Tặng nước ngọt cho sinh nhật"
+PROMO20,2025-10-20,"Free delivery đơn >500k"

@@ -1,0 +1,4 @@
+care_id,customer_id,create_sent,problem_sent
+CARE001,C003,2025-09-23T08:00:00,"Than phiền món mặn"
+CARE002,C004,2025-09-23T09:30:00,"Hỏi giờ mở cửa"
+CARE030,C102,2025-09-30T22:00:00,"Đổi lịch tiệc"

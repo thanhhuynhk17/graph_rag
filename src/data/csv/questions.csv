@@ -1,0 +1,5 @@
+question_id,customer_id,text,intent_name,channel_name,created_at
+Q003,C003,"Món nào không cay?","non_spicy","chat",2025-09-23T09:15:00
+Q004,C004,"Có món chay nào?","vegan","email",2025-09-23T14:20:00
+Q005,C005,"Tôi muốn đặt tiệc 20 người","banquet","phone",2025-09-23T16:45:00
+Q152,C102,"Có giảm giá không?","promo","chat",2025-09-30T18:00:00

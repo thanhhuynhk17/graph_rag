@@ -43,7 +43,7 @@ async def main():
         model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
         base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
         api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
-        dimensions=int(os.getenv("EMBED_DIM")),
+        # dimensions=int(os.getenv("EMBED_DIM")),
         tiktoken_enabled=False,
     )
 

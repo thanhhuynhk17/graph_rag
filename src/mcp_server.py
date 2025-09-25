@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Annotated, Literal
 from dotenv import load_dotenv
 from underthesea import word_tokenize, pos_tag
+from src.utils.hybridsearch import run_hybrid_search
 from datetime import datetime
 import os, uuid, json
 from typing import List
@@ -30,6 +31,11 @@ def tao_embedding(text: str):
 # ---------------- FastMCP server ----------------
 mcp = FastMCP(name="RestaurantMCP")
 
+# ---------------- Init Neo4j (com_que) ----------------
+from src.utils.helpers import init_data_neo4j
+
+# init_data_neo4j(driver=driver)
+
 # ---------------- Models ----------------
 class SearchReq(BaseModel):
     query: str = Field(..., min_length=3, description="Tên món ăn, tag hoặc ingredient để tìm kiếm")
@@ -48,51 +54,64 @@ class FeedbackReq(BaseModel):
     text: str
 # ---------------- Tools ----------------
 
-@mcp.tool(name="hybrid_search", description="Tìm món ăn theo tên, tag hoặc ingredient")
-def hybrid_search(req: SearchReq):
+@mcp.tool(name="init_database", description="...")
+async def init_database():
+    init_data_neo4j(driver=driver)
+    return "✅ Đã khởi tạo dữ liệu mẫu vào Neo4j"
+
+@mcp.tool(
+    name="hybrid_search",
+    description=(
+    "Retrieve restaurant and dish info from the knowledge base.\n"
+    "Supports:\n"
+    "- Restaurant details: name, location, cuisine, opening hours\n"
+    "- Dish details: name, ingredients, dietary info, cooking style\n"
+    "Increasing 'k' allows fetching more candidate results for better coverage."
+    )
+)
+async def hybrid_search(
+    # Search query with minimum length
+    query: Annotated[str, Field(min_length=3, max_length=300, description="Restaurant or dish name, location, or type")],
+
+    # Number of top results to fetch
+    k: Annotated[Literal[30, 50], Field(description="Number of top results to retrieve: 30=fast, 50=broad")] = 30,
+
+    # Optional filter: cuisine type
+    cuisine: Annotated[str, Field(max_length=50, description="Optional cuisine type to filter results")] = "",
+    
+):
+    if not query:
+        raise ValueError("Query must not be None")
+
+    results = run_hybrid_search(
+        query=query,
+        k=k,
+        is_bm25_enable=False
+    )
+    return results
+
+@mcp.tool(name="search_database", description="Tìm món ăn theo tên, tag hoặc ingredient")
+def search_database(req: SearchReq):
+    # Build full-text query string in Python
+    phrase = req.query.strip()
+    words  = phrase.split()
+    phrase_part = f'({phrase})^3'          # boost cao nhất cho cụm nguyên
+    term_part   = f'({" OR ".join(words)})^1'  # mọi từ riêng
+    query = f'{phrase_part} OR {term_part}'
+
     cypher = """
-    MATCH (d:Dish)
-    WHERE toLower(d.type_of_food) = toLower($q)
-        OR toLower(d.name_of_food) = toLower($q)
-        OR toLower(d.how_to_prepare) = toLower($q)
-        OR toLower(d.main_ingredients) = toLower($q)
-        OR toLower(d.taste) = toLower($q)
-        OR toLower(d.outstanding_fragrance) = toLower($q)
-        OR toLower(d.number_of_people_eating) = toLower($q)
-
-        OR toLower(d.type_of_food) CONTAINS toLower($q)
-        OR toLower(d.name_of_food) CONTAINS toLower($q)
-        OR toLower(d.how_to_prepare) CONTAINS toLower($q)
-        OR toLower(d.main_ingredients) CONTAINS toLower($q)
-        OR toLower(d.taste) CONTAINS toLower($q)
-        OR toLower(d.outstanding_fragrance) CONTAINS toLower($q)
-        OR toLower(d.number_of_people_eating) CONTAINS toLower($q)
-
-        OR EXISTS {
-            MATCH (d)-[:HAS_TAG]->(t:Tag)
-            WHERE toLower(t.tag) = toLower($q)
-                OR toLower(t.tag) CONTAINS toLower($q)
-        }
-        OR EXISTS {
-            MATCH (d)-[:HAS_INGREDIENT]->(i:Ingredient)
-            WHERE toLower(i.name) = toLower($q)
-                OR toLower(i.name) CONTAINS toLower($q)
-        }
-    RETURN apoc.text.join([
-            toString(d.dish_id),
-            toString(d.type_of_food),
-            toString(d.name_of_food),
-            toString(d.how_to_prepare),
-            toString(d.main_ingredients),
-            toString(d.taste),
-            toString(d.outstanding_fragrance),
-            toString(d.current_price),
-            toString(d.number_of_people_eating)
-        ], ', ') AS line
-    LIMIT $k;
-    """
-    rec, _, _ = driver.execute_query(cypher, q=req.query, k=req.k)
-    return [r.data() for r in rec]
+        CALL db.index.fulltext.queryNodes('keyword', $query) YIELD node, score
+        RETURN node._id AS id,
+            node.name_of_food AS name_food, score
+        ORDER BY score DESC
+        LIMIT $k
+        """
+    rec, _, _ = driver.execute_query(cypher, query=query, k=req.k)
+    
+    if len(rec) == 0:
+        return "[EMPTY RESULT] This keyword/keyphrase is not found in neo4j"
+    
+    return [dict(r) for r in rec]
 
 @mcp.tool(name="xem_schema", description="Xem schema graph hiện tại")
 def xem_schema():
@@ -108,17 +127,34 @@ def xem_schema():
             {"id": r.id, "type": r.type, "start": r.start_node.id, "end": r.end_node.id, **dict(r)} for r in rec[0]["relationships"]
         ]
     }
+    
+def normalize_price(p) -> int:
+    try:
+        import pandas as pd
+        return int(pd.Series([p])
+                     .astype(str)
+                     .str.replace(r'[,. ]', '', regex=True)
+                     .str.extract(r'(\d+)')[0]
+                     .astype(float)
+                     .fillna(0)
+                     .iloc[0])
+    except (ValueError, TypeError):
+        raise ValueError("Giá nhập không hợp lệ")
 
-@mcp.tool(name="tim_theo_gia", description="Tìm món ăn dưới mức giá tối đa")
+@mcp.tool(name="tim_theo_gia", description="Tìm món ≤ giá tối đã")
 def tim_theo_gia(req: PriceReq):
+
+    max_int = normalize_price(req.max_price)
     cypher = """
-    MATCH (d:Dish)
-    WHERE d.current_price <= $max
-    RETURN d.dish_id AS id, d.name_of_food AS ten, d.current_price
-    ORDER BY d.current_price
+    MATCH (c:Chunk)
+    WHERE toInteger(replace(c.current_price, ',', '')) <= $max_int
+    RETURN c._id           AS id,
+           c.name_of_food   AS ten,
+           c.current_price  AS current_price
+    ORDER BY toInteger(replace(c.current_price, ',', '')) DESC
     """
-    rec, _, _ = driver.execute_query(cypher, max=req.max_price)
-    return [r.data() for r in rec]
+    rec, _, _ = driver.execute_query(cypher, max_int=max_int)
+    return [dict(r) for r in rec]
 
 # @mcp.tool(name="goi_y_mua_kem", description="Gợi ý món thường được mua kèm (market-basket)")
 # def goi_y_mua_kem(req: DishReq):
