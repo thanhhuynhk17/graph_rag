@@ -1,5 +1,0 @@
-behaviour_id,customer_id,date,description,location,count,notes
-B001,C003,2025-09-20,"click banner family set","web",3,"landing page"
-B002,C004,2025-09-21,"add dish to fav","app",1,"Bánh khọt"
-B003,C005,2025-09-22,"share promo FB","social",5,"code FBFAM"
-B250,C102,2025-09-30,"book banquet 30 pax","phone",1,"wedding party"

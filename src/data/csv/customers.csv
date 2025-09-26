@@ -1,4 +1,4 @@
-customer_id,full_name,phone,email,dob,gender,notes
+customer_id,full_name,_phone,email,dob,gender,notes
 C003,Lê Thị C,0905556666,c@mail.com,1992-07-15,female,thích ăn chay
 C004,Phạm Văn D,0907778888,d@mail.com,1988-03-22,male,ăn cay tốt
 C005,Hoàng Thị E,0909990000,e@mail.com,1995-12-05,female,không ăn tôm

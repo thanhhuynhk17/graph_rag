@@ -94,13 +94,10 @@ def init_data_neo4j(driver):
             # --- unique constraints ---
             "CREATE CONSTRAINT chunk_unique_id         IF NOT EXISTS FOR (c:Chunk)      REQUIRE c._id          IS UNIQUE",
             "CREATE CONSTRAINT customer_unique_id      IF NOT EXISTS FOR (cus:Customer) REQUIRE cus.customer_id IS UNIQUE",
-            "CREATE CONSTRAINT ingredient_unique_name  IF NOT EXISTS FOR (i:Ingredient) REQUIRE i.name         IS UNIQUE",
             "CREATE CONSTRAINT order_unique_id         IF NOT EXISTS FOR (o:Order)      REQUIRE o.order_id     IS UNIQUE",
             "CREATE CONSTRAINT bill_unique_id          IF NOT EXISTS FOR (b:Bill)       REQUIRE b.bill_id      IS UNIQUE",
             "CREATE CONSTRAINT question_unique_id      IF NOT EXISTS FOR (q:Question)   REQUIRE q.question_id  IS UNIQUE",
-            "CREATE CONSTRAINT feedback_unique_id      IF NOT EXISTS FOR (f:Feedback)   REQUIRE f.feedback_id  IS UNIQUE",
-            "CREATE CONSTRAINT behaviour_unique_id     IF NOT EXISTS FOR (b:Behaviour)  REQUIRE b.behaviour_id IS UNIQUE",
-            "CREATE CONSTRAINT promotion_unique_id     IF NOT EXISTS FOR (p:Promotion)  REQUIRE p.promotion_id IS UNIQUE",
+
 
             # --- regular indexes ---
             "CREATE INDEX customer_phone     IF NOT EXISTS FOR (cus:Customer) ON (cus.phone)",
@@ -109,8 +106,6 @@ def init_data_neo4j(driver):
             "CREATE INDEX order_dish         IF NOT EXISTS FOR (o:Order)      ON (o.dish_id)",
             "CREATE INDEX question_customer  IF NOT EXISTS FOR (q:Question)   ON (q.customer_id)",
             "CREATE INDEX question_intent    IF NOT EXISTS FOR (q:Question)   ON (q.intent_name)",
-            "CREATE INDEX feedback_customer  IF NOT EXISTS FOR (f:Feedback)   ON (f.customer_id)",
-            "CREATE INDEX feedback_target    IF NOT EXISTS FOR (f:Feedback)   ON (f.target_type, f.target_id)",
         ]
 
         def _run_all(tx):
@@ -124,12 +119,12 @@ def init_data_neo4j(driver):
             'CREATE FULLTEXT INDEX chunkCombineFT IF NOT EXISTS FOR (c:Chunk) ON EACH [c.combine_info]'
         )    
 
-    def up_chunk(driver, path: str = "file:///dishes.csv"):
-        query = f"""
-        LOAD CSV WITH HEADERS FROM '{path}' AS row
-        MERGE (c:Chunk {{_id: row._id}})
-        SET c.type_of_food          = row.type_of_food,
-            c.name_of_food          = row.name_of_food,
+    def up_chunk(driver):
+        query = """
+        LOAD CSV WITH HEADERS FROM 'file:///dishes.csv' AS row
+        MERGE (c:Chunk {_id: row._id})
+        SET c.name_of_food          = row.name_of_food,
+            c.type_of_food          = row.type_of_food,
             c.how_to_prepare        = row.how_to_prepare,
             c.main_ingredients      = row.main_ingredients,
             c.taste                 = row.taste,
@@ -141,23 +136,13 @@ def init_data_neo4j(driver):
         with driver.session() as sess:
             sess.run(query=query)
         
-        query = f"""
-        LOAD CSV WITH HEADERS FROM '{path}' AS row
-        UNWIND split(row.main_ingredients, ',') AS ing
-        WITH trim(ing) AS name, row
-        MERGE (i:Ingredient {{name: name}})
-        MERGE (c:Chunk {{_id: row._id}})
-        MERGE (c)-[:HAS_INGREDIENT]->(i)
-        """
-        with driver.session() as sess:
-            sess.run(query=query)
         
     def up_customer(driver):
-        query = f"""
+        query = """
         LOAD CSV WITH HEADERS FROM 'file:///customers.csv' AS row
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
+        MERGE (cus:Customer {customer_id: row.customer_id})
         SET cus.full_name = row.full_name,
-            cus.phone     = row.phone,
+            cus._phone     = row._phone,
             cus.email     = row.email,
             cus.dob       = date(row.dob),
             cus.gender    = row.gender,
@@ -167,96 +152,30 @@ def init_data_neo4j(driver):
             sess.run(query=query)
         
     def up_orther(driver):
-        query = f"""
+        query = """
         LOAD CSV WITH HEADERS FROM 'file:///orders.csv' AS row
-        MERGE (o:Order {{order_id: row.order_id}})
+        MERGE (o:Order {_id: row._id})
         SET o.customer_id  = row.customer_id,
             o.dish_id      = row.dish_id,
             o.order_time   = datetime(row.order_time),
             o.people_count = toInteger(row.people_count),
             o.unit_price   = toInteger(row.unit_price),
             o.quantity     = toInteger(row.quantity)
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
-        MERGE (d:Chunk {{_id: row.dish_id}})
+        MERGE (cus:Customer {customer_id: row.customer_id})
+        MERGE (d:Chunk {_id: row.dish_id})
         MERGE (cus)-[:PLACED]->(o)-[:CONTAINS]->(d)
         """
         with driver.session() as sess:
             sess.run(query=query)
     
     def up_question(driver):
-        query = f"""
+        query = """
         LOAD CSV WITH HEADERS FROM 'file:///questions.csv' AS row
-        MERGE (q:Question {{question_id: row.question_id}})
-        SET q.text        = row.text,
-            q.intent_name = row.intent_name,
-            q.channel_name= row.channel_name,
+        MERGE (q:Question {question_id: row.question_id})
+        SET q._text        = row._text,
             q.created_at  = datetime(row.created_at)
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
+        MERGE (cus:Customer {customer_id: row.customer_id})
         MERGE (cus)-[:ASKED]->(q)
-        """
-        with driver.session() as sess:
-            sess.run(query=query)
-        
-    def up_feedback(driver):
-        query = f"""
-        LOAD CSV WITH HEADERS FROM 'file:///feedbacks.csv' AS row
-        MERGE (f:Feedback {{feedback_id: row.feedback_id}})
-        SET f.customer_id = row.customer_id,
-            f.target_type = row.target_type,
-            f.target_id   = row.target_id,
-            f.rating      = toInteger(row.rating),
-            f.comment     = row.comment,
-            f.tasted_good = toBoolean(row.tasted_good),
-            f.would_reorder=toBoolean(row.would_reorder),
-            f.created_at  = datetime(row.created_at)
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
-        MERGE (cus)-[:GAVE]->(f)
-
-        // link feedback to Dish or Bill
-        WITH f, f.target_id AS target_id, f.target_type AS target_type 
-        CALL apoc.do.when(target_type = 'DISH',
-        'MATCH (d:Chunk {{_id: target_id}}) MERGE (f)-[:ABOUT]->(d)',
-        'MATCH (b:Bill {{bill_id: target_id}}) MERGE (f)-[:ABOUT]->(b)',
-        {{f:f, target_id:target_id}}) YIELD value RETURN 1
-        """
-        with driver.session() as sess:
-            sess.run(query=query)
-    
-    def up_behaviour(driver):
-        query = f"""
-        LOAD CSV WITH HEADERS FROM 'file:///behaviours.csv' AS row
-        MERGE (b:Behaviour {{behaviour_id: row.behaviour_id}})
-        SET b.customer_id = row.customer_id,
-            b.date        = date(row.date),
-            b.description = row.description,
-            b.location    = row.location,
-            b.count       = toInteger(row.count),
-            b.notes       = row.notes
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
-        MERGE (cus)-[:EXHIBITED]->(b)
-        """
-        with driver.session() as sess:
-            sess.run(query=query)
-        
-    def up_promotion(driver):
-        query = f"""
-        LOAD CSV WITH HEADERS FROM 'file:///promotions.csv' AS row
-        MERGE (p:Promotion {{promotion_id: row.promotion_id}})
-        SET p.apply_date  = date(row.apply_date),
-            p.description = row.description
-        """
-        with driver.session() as sess:
-            sess.run(query=query)
-        
-    def up_customercare(driver):
-        query = f"""
-        LOAD CSV WITH HEADERS FROM 'file:///customercare.csv' AS row
-        MERGE (cc:CustomerCare {{care_id: row.care_id}})
-        SET cc.customer_id   = row.customer_id,
-            cc.create_sent   = datetime(row.create_sent),
-            cc.problem_sent  = row.problem_sent
-        MERGE (cus:Customer {{customer_id: row.customer_id}})
-        MERGE (cus)-[:RECEIVED_CARE]->(cc)
         """
         with driver.session() as sess:
             sess.run(query=query)
@@ -267,10 +186,6 @@ def init_data_neo4j(driver):
     up_customer(driver)
     up_orther(driver)
     up_question(driver)
-    up_feedback(driver)
-    up_behaviour(driver)
-    up_promotion(driver)
-    up_customercare(driver)
 
 
 from langchain_community.document_loaders import Docx2txtLoader, JSONLoader, CSVLoader
