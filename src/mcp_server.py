@@ -32,36 +32,19 @@ def tao_embedding(text: str):
 mcp = FastMCP(name="RestaurantMCP")
 
 # ---------------- Init Neo4j (com_que) ----------------
-from src.utils.helpers import init_data_neo4j
+from src.utils.helpers import helpers
 
 # init_data_neo4j(driver=driver)
 
 # ---------------- Models ----------------
-class SearchReq(BaseModel):
-    query: str = Field(..., min_length=3, description="Tên món ăn, tag hoặc ingredient để tìm kiếm")
-    k: int = Field(10, description="Số lượng kết quả muốn lấy")
-
-class DishReq(BaseModel):
-    dish_id: str
-
-class PriceReq(BaseModel):
-    max_price: int
-    
-class WipeReq(BaseModel):
-    drop_schema: bool = Field(False, description="Nếu True, xóa luôn tất cả index/constraint trong DB")
-    database: str | None = Field(None, description="Tên database cần xóa, để None sẽ dùng DB mặc định")
-    
-class FeedbackReq(BaseModel):
-    customer_id: str
-    bill_id: str
-    dish_id: str
-    text: str
+from src.utils.schemas import SearchReq, DishReq, PriceReq, WipeReq, FeedbackReq
 # ---------------- Tools ----------------
 
 @mcp.tool(name="init_database", description="...")
 async def init_database():
-    init_data_neo4j(driver=driver)
+    res = helpers.init_data_neo4j(driver=driver)
     return "✅ Đã khởi tạo dữ liệu mẫu vào Neo4j"
+    # return "❌ Không thể khởi tạo dữ liệu mẫu vào Neo4j"
 
 @mcp.tool(
     name="hybrid_search",
@@ -106,15 +89,14 @@ def search_database(req: SearchReq):
     cypher = """
         CALL db.index.fulltext.queryNodes('keyword', $query) YIELD node, score
         RETURN node._id AS id,
-            node.name_of_food AS name_food, score
+            node._name AS name_food, node.type_of_food AS type_food, score
         ORDER BY score DESC
         LIMIT $k
         """
     rec, _, _ = driver.execute_query(cypher, query=query, k=req.k)
-    
+    driver.close()
     if len(rec) == 0:
         return "[EMPTY RESULT] This keyword/keyphrase is not found in neo4j"
-    
     return [dict(r) for r in rec]
 
 @mcp.tool(name="xem_schema", description="Xem schema graph hiện tại")
@@ -133,6 +115,13 @@ def xem_schema():
     }
     
 def normalize_price(p) -> int:
+    
+    """
+    Chuẩn hóa giá nhập vào thành int
+    Hỗ trợ các định dạng:
+    - 50000
+    - "50,000"
+    """
     try:
         import pandas as pd
         return int(pd.Series([p])
@@ -153,11 +142,12 @@ def tim_theo_gia(req: PriceReq):
     MATCH (c:Chunk)
     WHERE toInteger(replace(c.current_price, ',', '')) <= $max_int
     RETURN c._id           AS id,
-           c.name_of_food   AS ten,
+           c._name   AS ten,
            c.current_price  AS current_price
     ORDER BY toInteger(replace(c.current_price, ',', '')) DESC
     """
     rec, _, _ = driver.execute_query(cypher, max_int=max_int)
+    driver.close()
     return [dict(r) for r in rec]
 
 # @mcp.tool(name="goi_y_mua_kem", description="Gợi ý món thường được mua kèm (market-basket)")
@@ -169,79 +159,60 @@ def tim_theo_gia(req: PriceReq):
 #     """
 #     rec, _, _ = driver.execute_query(cypher, id=req.dish_id)
 #     return [r.data() for r in rec]
-from underthesea import word_tokenize
 
-def extract_phrases(text: str) -> List[str]:
-    """
-    "Món cơm chiên ăn khá ngon nhưng đợi lâu"
-    → ['Món cơm chiên', 'ăn', 'khá ngon', 'nhưng', 'đợi lâu']
-    """
-    tokens = pos_tag(text)
-    phrases, cur = [], []
 
-    for w, p in tokens:
-        if p in {'N', 'Np', 'Ny', 'V', 'A', 'R', 'C'}:
-            cur.append(w)
-        else:
-            if cur:
-                phrases.append(' '.join(cur))
-                cur = []
-    if cur:
-        phrases.append(' '.join(cur))
-    return phrases
+# @mcp.tool(name="feedback_bill", description="Khách phản hồi → chuỗi noun-phrase")
+# def feedback_bill(req: FeedbackReq):
+#     phrases = extract_phrases(req.text)
+#     if not phrases:                      # fallback
+#         phrases = [req.text[:50]]
 
-@mcp.tool(name="feedback_bill", description="Khách phản hồi → chuỗi noun-phrase")
-def feedback_bill(req: FeedbackReq):
-    phrases = extract_phrases(req.text)
-    if not phrases:                      # fallback
-        phrases = [req.text[:50]]
+#     fid = str(uuid.uuid4())
 
-    fid = str(uuid.uuid4())
+#     cypher = """
+#     MATCH (c:Customer {customer_id: $cust})
+#     MATCH (b:Bill  {bill_id: $bill})
+#     MATCH (d:Dish  {dish_id: $dish})
 
-    cypher = """
-    MATCH (c:Customer {customer_id: $cust})
-    MATCH (b:Bill  {bill_id: $bill})
-    MATCH (d:Dish  {dish_id: $dish})
+#     CREATE (f:Feedback {feedback_id: $fid, created_at: datetime()})
 
-    CREATE (f:Feedback {feedback_id: $fid, created_at: datetime()})
+#     MERGE (c)-[:FEEDBACK_BILL]->(b)
+#     MERGE (f)-[:ABOUT]->(b)
+#     MERGE (f)-[:WRONG_DISH {value: 1}]->(d)
 
-    MERGE (c)-[:FEEDBACK_BILL]->(b)
-    MERGE (f)-[:ABOUT]->(b)
-    MERGE (f)-[:WRONG_DISH {value: 1}]->(d)
+#     // ---- tạo chuỗi phrase ----
+#     WITH f, $phrases AS phrases
+#     UNWIND range(0, size(phrases)-1) AS idx
+#         MERGE (p:Phrase {text: phrases[idx]})
+#         WITH f, phrases, p, idx
+#         ORDER BY idx
+#         WITH f, collect(p) AS nodes
 
-    // ---- tạo chuỗi phrase ----
-    WITH f, $phrases AS phrases
-    UNWIND range(0, size(phrases)-1) AS idx
-        MERGE (p:Phrase {text: phrases[idx]})
-        WITH f, phrases, p, idx
-        ORDER BY idx
-        WITH f, collect(p) AS nodes
+#     // cặp liền kề (n1,n2) trên mỗi row
+#     WITH f, nodes, range(0, size(nodes)-2) AS idxs
+#     UNWIND idxs AS i
+#         WITH f, nodes, nodes[i] AS n1, nodes[i+1] AS n2
+#         MERGE (n1)-[:NEXT]->(n2)
+#         WITH f, nodes   // 👈 giữ lại nodes để dùng tiếp
 
-    // cặp liền kề (n1,n2) trên mỗi row
-    WITH f, nodes, range(0, size(nodes)-2) AS idxs
-    UNWIND idxs AS i
-        WITH f, nodes, nodes[i] AS n1, nodes[i+1] AS n2
-        MERGE (n1)-[:NEXT]->(n2)
-        WITH f, nodes   // 👈 giữ lại nodes để dùng tiếp
+#     // nối Feedback với phrase đầu
+#     WITH f, nodes[0] AS firstP, nodes
+#     MERGE (f)-[:STARTS_WITH]->(firstP)
 
-    // nối Feedback với phrase đầu
-    WITH f, nodes[0] AS firstP, nodes
-    MERGE (f)-[:STARTS_WITH]->(firstP)
+#     RETURN f.feedback_id AS feedback_id,
+#         firstP.text   AS first_phrase,
+#         nodes[-1].text AS last_phrase
+#     """
 
-    RETURN f.feedback_id AS feedback_id,
-        firstP.text   AS first_phrase,
-        nodes[-1].text AS last_phrase
-    """
-
-    rec, _, _ = driver.execute_query(
-        cypher,
-        cust=req.customer_id,
-        bill=req.bill_id,
-        dish=req.dish_id,
-        fid=fid,
-        phrases=phrases
-    )
-    return [r.data() for r in rec]
+#     rec, _, _ = driver.execute_query(
+#         cypher,
+#         cust=req.customer_id,
+#         bill=req.bill_id,
+#         dish=req.dish_id,
+#         fid=fid,
+#         phrases=phrases
+#     )
+#     return [r.data() for r in rec]
 
 # ---------------- HTTP app ----------------
 app = mcp.http_app()

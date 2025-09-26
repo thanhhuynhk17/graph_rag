@@ -51,7 +51,6 @@ from langchain_core.documents import Document
 
 from typing import List, Literal, Callable, Dict, Any
 from pydantic import BaseModel, Field
-from src.utils.helpers import normalize_vnese
 
 class HybridSearchQuery(BaseModel):
     """
@@ -229,10 +228,47 @@ def load_neo4j_documents() -> List[Document]:
         for doc in neo4j_docs
     ]
 
+from pyvi import ViTokenizer, ViPosTagger
+from src.utils.helpers import helpers
+from underthesea import word_tokenize
 
 def bm25_preprocessing_func(text: str) -> List[str]:
-    normalized = normalize_vnese(text).lower()
-    return normalized.split()
+    """
+    First: MÓN GÀ, VỊT & TRỨNG, Vịt kho gừng, Thịt vịt chặt khúc, kho cùng gừng, mắm, đường cho săn, Vịt, gừng, mắm, đường, món mặn, Gừng nồng, mùi vịt kho dậy mùi, 2-3 người
+    Final: ['gà', 'vịt trứng', 'vịt kho gừng', 'thịt vịt chặt khúc', 'kho gừng', 'mắm', 'đường săn', 'vịt', 'gừng', 'mắm', 'đường', 'mặn', 'gừng nồng', 'mùi vịt kho dậy mùi', '2 3 người']
+    
+    First: MÓN GÀ, VỊT & TRỨNG, Trứng chiên thịt, Trứng gà đánh tan, trộn thịt băm, nêm gia vị, chiên vàng, Trứng gà, thịt ba chỉ băm, món béo, mặn, Trứng chiên vàng thơm, hành lá, 2-3 người
+    Final: ['gà', 'vịt trứng', 'trứng chiên thịt', 'trứng gà đánh tan', 'trộn thịt băm', 'nêm gia vị', 'chiên vàng', 'trứng gà', 'thịt ba chỉ băm', 'béo', 'mặn', 'trứng chiên vàng thơm', 'hành lá', '2 3 người']
+
+    First: NƯỚC MÁT NHÀ LÀM, Trà đá, Trà nấu, Trà, Nước, Trà, 1 người
+    Final: ['nước mát', 'trà đá', 'trà nấu', 'trà', 'nước', 'trà', '1 người']
+    
+    First: NƯỚC MÁT NHÀ LÀM, Coca / 7 UP, Nước ngọt có gas, Nước ngọt, Soft Drink, Gas, 1 người
+    Final: ['nước mát', 'coca 7 up', 'nước ngọt gas', 'nước ngọt', 'soft drink', 'gas', '1 người']
+    
+    First: NƯỚC MÁT NHÀ LÀM, Nước suối, Nước suối thanh lọc, Nước suối, Nước, Nước, 1 người
+    Final: ['nước mát', 'nước suối', 'nước suối thanh lọc', 'nước suối', 'nước', 'nước', '1 người']
+    
+    First: NƯỚC MÁT NHÀ LÀM, Bia các loại (Tiger, Heineken, Saigon), Bia các loại, Vị lúa mạch, Beer, Bia, 1 người
+    Final: ['nước mát', 'bia loại tiger', 'heineken', 'saigon', 'bia loại', 'vị lúa mạch', 'beer', 'bia', '1 người']
+    """
+    normalized = helpers.normalize_vnese(text)
+    print("First:", normalized)
+    normalized = helpers.clean_vietnamese_text(normalized)
+    # print("0.1:", normalized)
+    normalized = ' '.join(word_tokenize(normalized))
+    # print("0.5:", normalized)
+    normalized = ViTokenizer.tokenize(normalized)
+    # print("1:", normalized)
+    sequences = [str(helpers.normalize_record(text=seq)).lower() for seq in normalized.split(" , ")]
+    # print("2:", sequences)
+    sequences = [helpers.remove_stopwords_and_not_vi(text=seq) for seq in sequences]
+    # print("3:", sequences)
+    sequences = [str(helpers.normalize_record(text=seq)).lower() for seq in sequences]
+
+    sequences = [seq.replace("_", " ") for seq in sequences if seq]
+    print("Final:", sequences)
+    return sequences
 
 from src.utils.helpers import rerank_novita, rerank_cohere # for vllm localhost
 # global variable
@@ -271,7 +307,7 @@ def run_hybrid_search(query: str, k: int, is_bm25_enable: bool):
     if not query:
         raise ValueError("Query must not be None")
 
-    query = normalize_vnese(query)
+    query = helpers.normalize_vnese(query)
     pipeline = get_pipeline()
     results = pipeline.search(
         query,

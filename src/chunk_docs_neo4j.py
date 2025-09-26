@@ -5,7 +5,7 @@ load_dotenv()
 import asyncio
 import logging
 from langchain_openai import OpenAIEmbeddings
-from utils.helpers import process_and_embed_to_neo4j
+from utils.helpers import EmbedToChunkNeo4j
 import argparse
 
 # Configure logger
@@ -39,10 +39,17 @@ async def main():
 
     print(file_paths)
 
+    model = os.getenv("OPENAI_API_MODEL_NAME_EMBED")
+    base_url = os.getenv("OPENAI_BASE_URL_EMBED")
+    api_key = os.getenv("OPENAI_API_KEY_EMBED")
+    if not model or not base_url or not api_key:
+        raise RuntimeError("Missing embedding env vars: OPENAI_API_MODEL_NAME_EMBED, OPENAI_BASE_URL_EMBED, OPENAI_API_KEY_EMBED")
+
+    from pydantic import SecretStr
     embeddings = OpenAIEmbeddings(
-        model=os.getenv("OPENAI_API_MODEL_NAME_EMBED", None),
-        base_url=os.getenv("OPENAI_BASE_URL_EMBED", None),
-        api_key=os.getenv("OPENAI_API_KEY_EMBED", None),
+        model=model,
+        base_url=base_url,
+        api_key=SecretStr(api_key),
         # dimensions=int(os.getenv("EMBED_DIM")),
         tiktoken_enabled=False,
     )
@@ -51,12 +58,15 @@ async def main():
     username = os.getenv("NEO4J_USER")
     password = os.getenv("NEO4J_PASSWORD")
     database = os.getenv("NEO4J_DATABASE")
+    if not neo4j_url or not username or not password or not database:
+        raise RuntimeError("Missing Neo4j env vars: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE")
     index_name = "vietnamese_docs"
 
     tasks = []
+    embedder = EmbedToChunkNeo4j()
     for file_path in file_paths:
         tasks.append(
-            process_and_embed_to_neo4j(
+            embedder.process_and_embed_to_neo4j(
                 file_path=file_path,
                 neo4j_url=neo4j_url,
                 username=username,
