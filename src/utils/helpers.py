@@ -5,17 +5,16 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Protocol
+from underthesea import word_tokenize, pos_tag
 
 import pandas as pd
 import requests
 import cohere
-from underthesea import word_tokenize
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.document_loaders import CSVLoader
 from langchain_neo4j import Neo4jVector
 from pathlib import Path
 from typing import Optional, Union
-from underthesea import word_tokenize, pos_tag
 # VietnameseToneNormalization.md
 # https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
 

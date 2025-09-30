@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import Literal
 
 class SearchReq(BaseModel):
     query: str = Field(..., min_length=3, description="Tên món ăn, tag hoặc ingredient để tìm kiếm")
@@ -19,3 +20,11 @@ class FeedbackReq(BaseModel):
     bill_id: str
     dish_id: str
     text: str
+    
+class SearchTypeCategory(BaseModel):
+    category: Literal[
+        "món cá", "món khai vị", "món ăn chơi", "món rau", "món gỏi",
+        "món gà, vịt & trứng", "món tôm & mực", "món xào", "nước mát nhà làm",
+        "lẩu", "món thịt", "món sườn & đậu hũ", "món canh", "các loại khô", "tráng miệng"
+    ] = Field(..., description="Loại món ăn")
+    keyword: str = Field("", description="Từ khóa thêm (VD: 'cay', 'mặn')")

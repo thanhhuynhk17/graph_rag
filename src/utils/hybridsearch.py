@@ -53,33 +53,12 @@ from typing import List, Literal, Callable, Dict, Any
 from pydantic import BaseModel, Field
 
 class HybridSearchQuery(BaseModel):
-    """
-    Schema for retrieving restaurant and dish information 
-    from the knowledge base.
+    query: str = Field(..., description="""
+                       Tool này được sử dụng sau cùng để tiết kiệm tài nguyên.
 
-    Supports:
-    - Restaurant details (name, location, cuisine, opening hours, etc.)
-    - Dish details (ingredients, cooking style, dietary info, etc.)
-
-    Increasing 'k' allows fetching more candidate results for better coverage.
-    """
-    query: str = Field(
-        ...,
-        description=(
-            "Natural language search query. "
-            "Can be about restaurants (location, cuisine type, opening hours) "
-            "or dishes (name, ingredients, dietary preferences, cooking style)."
-        )
-    )
-    k: Literal[30,50] = Field(
-        ...,
-        description=(
-            "Number of top results to retrieve. "
-            "Use 30 for a smaller, faster search; 50 for broader coverage. "
-            "If results are empty, increase k. If still empty, the requested restaurant or dish "
-            "may not exist in the database."
-        )
-    )
+                       Từ khóa món ăn + loại món ăn (món cá, món khai vị, món ăn chơi, món rau, món gỏi, món gà, vịt & trứng, món tôm & mực, món xào, nước mát nhà làm, lẩu, món thịt, món sườn & đậu hũ, món canh, các loại khô, tráng miệng), ví dụ: 'món cá, cá kho'
+                       """)
+    k: Literal[5, 10, 20] = Field(5, description="Minimum 5, maximum 20. Số lượng gợi ý món ăn liên quan nhất.")
 
 class HybridRetrieverPipeline:
     """
