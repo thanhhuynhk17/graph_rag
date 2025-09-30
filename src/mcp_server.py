@@ -139,6 +139,7 @@ def search_database(req: SearchReq) -> str:
             "- món cá <không cay>, món lẩu <không cay>, món rau <không cay> "
         )
 )
+
 def multi_filter_category(categories: List[str], keywords: List[str]) -> str:
    
     if len(categories) != len(keywords):
@@ -205,13 +206,11 @@ def multi_filter_category(categories: List[str], keywords: List[str]) -> str:
     )
 )
 def menu_value_count_and_price() -> str:
-    """
-    Thống kê số lượng món theo type_of_food và liệt kê TẤT CẢ các món thuộc từng loại.
-    """
-    cypher = f"""
+    cypher = """
     MATCH (c:Chunk)
     WHERE c.type_of_food IS NOT NULL
-    WITH c.type_of_food AS type, collect(DISTINCT "\n+ " + c.current_price + " vnd" + ", " + c._name) AS foods
+    WITH c.type_of_food AS type,
+         collect(DISTINCT "\n+ [" + c._id + "] " + c._name + " - " + replace(c.current_price, ',000 vnd', 'k')) AS foods
     WITH type, size(foods) AS count, foods
     RETURN type, count, foods
     ORDER BY count DESC
@@ -244,7 +243,7 @@ def menu_value_count_just_name() -> str:
     cypher = f"""
     MATCH (c:Chunk)
     WHERE c.type_of_food IS NOT NULL
-    WITH c.type_of_food AS type, collect(DISTINCT c._name) AS foods
+    WITH c.type_of_food AS type, collect(DISTINCT "[" + c._id + "] " + c._name) AS foods
     WITH type, size(foods) AS count, foods
     RETURN type, count, foods
     ORDER BY count DESC
@@ -296,6 +295,32 @@ def hello_and_show_menu() -> str:
         lines.append(f"\n- TYPE 'món {t}' ALL {row['count']} ITEMS: \n{list_price_food}")
 
     return "Menu hiện tại gồm:\n\n" + "\n".join(lines)
+
+@mcp.tool(
+    name="search_food_price",
+    description=(
+        "Dùng tool này để tìm giá các món ăn theo ID. "
+        "Có thể nhập một ID hoặc nhiều ID cùng lúc. "
+        "Kết quả trả về gồm tên món và giá của từng ID."
+    )
+)
+def search_food_price(food_ids: list[str]) -> str:
+    cypher = f"""
+    MATCH (c:Chunk)
+    WHERE c._id IN $ids
+    RETURN c._id AS id, c._name AS name, c.current_price AS price
+    """
+    records, _, _ = driver.execute_query(cypher, ids=food_ids)
+
+    if not records:
+        return "Không tìm thấy món ăn nào với ID đã nhập."
+
+    lines = []
+    for row in records:
+        price_str = f"{row['price']} VND" if row.get("price") else "Chưa có giá"
+        lines.append(f"- ID {row['id']}: {row['name']} — {price_str}")
+
+    return "Kết quả tìm kiếm giá món ăn:\n" + "\n".join(lines)
 
 # @mcp.tool(name="goi_y_mua_kem", description="Gợi ý món thường được mua kèm (market-basket)")
 # @mcp.tool(name="feedback_bill", description="Khách phản hồi → chuỗi noun-phrase")
