@@ -1,6 +1,6 @@
 from fastmcp import FastMCP
 from langchain_mcp_adapters.tools import to_fastmcp
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
@@ -17,51 +17,43 @@ import re
 
 import pandas as pd # test
 
+from contextlib import asynccontextmanager
+from src.neo4j_manager.order_manager import OrderManager
 # ---------------- CONFIG ----------------
 load_dotenv()
 
-def load_env(key: str, default: str = ""):
-    return os.getenv(key, default)
+# ---------------- Lifespan ----------------
+@asynccontextmanager
+async def lifespan(server: FastMCP):
+    # --------------  start-up  -----------------
+    driver = AsyncGraphDatabase.driver(
+        os.getenv("NEO4J_URI"),
+        auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
+    )
 
-NEO4J_URI  = load_env("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = load_env("NEO4J_USER", "neo4j")
-NEO4J_PASS = load_env("NEO4J_PASSWORD", "12345678")
-EMB_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
-
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
-emb    = SentenceTransformer(EMB_MODEL)
-
-def tao_embedding(text: str):
-    return emb.encode(text, normalize_embeddings=True).tolist()
+    # Initialize OrderManager instance for managing orders in Neo4j
+    order_manager = OrderManager(driver)
+    
+    # Attach both driver and order_manager to the server's state
+    server.state.driver = driver
+    server.state.order_manager = order_manager
+    
+    try:
+        yield
+    finally:
+        # Shutdown: Close the driver connection
+        await driver.close()
 
 # ---------------- FastMCP server ----------------
-mcp = FastMCP(name="RestaurantMCP")
-
-# ---------------- Init Neo4j (com_que) ----------------
-from src.utils.helpers import helpers
-
-# init_data_neo4j(driver=driver)
+mcp = FastMCP(name="RestaurantMCP",
+    description="MCP for restaurant and dish info",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # ---------------- Models ----------------
 from src.utils.schemas import SearchReq, DishReq, PriceReq, WipeReq, FeedbackReq
 # ---------------- Tools ----------------
-
-
-# _DATABASE: Optional[pd.DataFrame] = None
-# _MODEL: Optional[Any] = None
-
-# def get_database() -> pd.DataFrame:
-#     global _DATABASE
-#     if _DATABASE is None:
-#         _DATABASE = pd.read_csv('./data/csv/dishes.csv')
-#     return _DATABASE
-
-# @mcp.tool(name="init_database", description="...")
-# async def init_database():
-#     res = helpers.init_data_neo4j(driver=driver)
-#     return "✅ Đã khởi tạo dữ liệu mẫu vào Neo4j"
-#     # return "❌ Không thể khởi tạo dữ liệu mẫu vào Neo4j"
-
 @mcp.tool(
     name="hybrid_search",
     description=(
@@ -89,7 +81,7 @@ async def hybrid_search(
     results = run_hybrid_search(
         query=query,
         k=k,
-        is_bm25_enable=False
+        is_bm25_enable=True
     )
     return results
 
@@ -111,7 +103,7 @@ def search_database(req: SearchReq) -> str:
         ORDER BY score DESC
         LIMIT $k
     """
-    records, _, _ = driver.execute_query(cypher, query=query, k=req.k)
+    records, _, _ = mcp.state.driver.execute_query(cypher, query=query, k=req.k)
 
     if not records:
         return "Không tìm thấy món nào phù hợp."
@@ -174,7 +166,7 @@ def multi_filter_category(categories: List[str], keywords: List[str]) -> str:
                         c.current_price AS price
         ORDER BY c._id
         """
-        records, _, _ = driver.execute_query(
+        records, _, _ = mcp.state.driver.execute_query(
             cypher,
             type_norm=type_norm,
             kw_regex=kw_regex
@@ -216,7 +208,7 @@ def menu_value_count_and_price() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = driver.execute_query(cypher)
+    records, _, _ = mcp.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -249,7 +241,7 @@ def menu_value_count_just_name() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = driver.execute_query(cypher)
+    records, _, _ = mcp.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -282,7 +274,7 @@ def hello_and_show_menu() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = driver.execute_query(cypher)
+    records, _, _ = mcp.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -310,7 +302,7 @@ def search_food_price(food_ids: list[str]) -> str:
     WHERE c._id IN $ids
     RETURN c._id AS id, c._name AS name, c.current_price AS price
     """
-    records, _, _ = driver.execute_query(cypher, ids=food_ids)
+    records, _, _ = mcp.state.driver.execute_query(cypher, ids=food_ids)
 
     if not records:
         return "Không tìm thấy món ăn nào với ID đã nhập."

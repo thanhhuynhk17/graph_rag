@@ -44,13 +44,13 @@ services:
         # so containers must use the service name "neo4j" instead of localhost.
         - NEO4J_URI=bolt://neo4j:7687
 
-        # Embedding service runs on the HOST (not in this compose).
-        # Containers must use "host.docker.internal" to reach host:8080.
-        - OPENAI_BASE_URL_EMBED=http://host.docker.internal:8080/v1
+        # # Embedding service runs on the HOST (not in this compose).
+        # # Containers must use "host.docker.internal" to reach host:8080.
+        # - OPENAI_BASE_URL_EMBED=http://host.docker.internal:8080/v1
 
-        # Reranker service also runs on the HOST (not in this compose).
-        # Containers must use "host.docker.internal" to reach host:8081.
-        - OPENAI_BASE_URL_RERANK=http://host.docker.internal:8081
+        # # Reranker service also runs on the HOST (not in this compose).
+        # # Containers must use "host.docker.internal" to reach host:8081.
+        # - OPENAI_BASE_URL_RERANK=http://host.docker.internal:8081
     ports:
       - "8000:8000"   # MCP server
     depends_on:

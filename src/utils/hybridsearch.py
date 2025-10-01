@@ -257,7 +257,7 @@ def get_pipeline():
     if _pipeline is None:
         _pipeline = HybridRetrieverPipeline(
             bm25_preprocessing_func=bm25_preprocessing_func,
-            rerank_func=rerank_cohere # rerank_novita / rerank_cohere
+            rerank_func=rerank_novita # rerank_novita / rerank_cohere
         )
     return _pipeline
 

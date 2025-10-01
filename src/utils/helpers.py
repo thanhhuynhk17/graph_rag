@@ -580,8 +580,9 @@ class Helpers:
         return rerank_cohere(query, documents, top_n)
     
     
-processor = VietnameseTextProcessor()
-helpers = Helpers()
+# processor = VietnameseTextProcessor()
+# helpers = Helpers()
+
 # Re-export supported extensions for embeddings usage (e.g., chunk_docs_neo4j)
 SUPPORTED_EXTS = EmbedToChunkNeo4j.SUPPORTED_EXTS
 

@@ -50,7 +50,7 @@ async def main():
         model=model,
         base_url=base_url,
         api_key=SecretStr(api_key),
-        # dimensions=int(os.getenv("EMBED_DIM")),
+        dimensions=int(os.getenv("EMBED_DIM")),
         tiktoken_enabled=False,
     )
 
