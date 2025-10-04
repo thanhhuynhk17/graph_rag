@@ -529,12 +529,15 @@ class Helpers:
     This keeps the original module-level functions intact for backward compatibility,
     but allows callers to import and use a `Helpers` instance if they prefer OOP style:
 
-        from src.utils.helpers import helpers
+        from src.utils import helpers
         helpers.normalize_vnese(text)
         helpers.process_and_embed_to_neo4j(...)
     """
 
     def __init__(self):
+        # Logs for debugging singleton initialization
+        print("Initializing Helpers instance...")
+        
         self.processor = VietnameseTextProcessor()
         self.embedder = EmbedToChunkNeo4j()
 
@@ -579,9 +582,6 @@ class Helpers:
     def rerank_cohere(self, query: str, documents: list[str], top_n: int) -> Dict:
         return rerank_cohere(query, documents, top_n)
     
-    
-# processor = VietnameseTextProcessor()
-# helpers = Helpers()
 
 # Re-export supported extensions for embeddings usage (e.g., chunk_docs_neo4j)
 SUPPORTED_EXTS = EmbedToChunkNeo4j.SUPPORTED_EXTS

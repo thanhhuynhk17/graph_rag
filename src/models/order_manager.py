@@ -1,10 +1,15 @@
 import uuid
 from typing import Optional, List, Dict
-from neo4j import AsyncDriver, RoutingControl
+from neo4j import Driver
 import pendulum
 from datetime import timedelta
 import logging
 from neo4j.exceptions import Neo4jError
+from neomodel import install_labels, db
+
+# Import models
+from .order_graph import Customer, Order, Dish, Placed, Contains
+from .config import RestaurantConfig
 
 # Configure logging
 logging.basicConfig(
@@ -17,22 +22,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configuration
+config = RestaurantConfig()
+
 class OrderManager:
-    """Manages restaurant orders in a Neo4j knowledge graph using inlined Cypher queries."""
+    """Manages restaurant orders using neomodel ORM."""
     
-    def __init__(self,
-                driver: AsyncDriver
-        ):
+    def __init__(self, driver: Driver):
         self.driver = driver
+        # Set the database connection for neomodel
+        from neomodel import config as neomodel_config
+        # Note: In a real application, you'd configure this properly
+        # For now, we'll use the driver directly with neomodel queries
         
     async def initialize(self):
-        """Initialize constraints and indexes for Customer, Dish, and Order nodes.
-        
-        Args:
-            refresh_database (bool): If True, deletes all nodes and relationships before creating constraints and indexes. Use with caution.
-        """
-        raise NotImplementedError("The 'initialize' method is not implemented in this snippet.")
-    
+        """Initialize database constraints and indexes."""
+        try:
+            # Install labels and constraints for all models
+            install_labels(Customer)
+            install_labels(Order)
+            install_labels(Dish)
+            install_labels(Placed)
+            install_labels(Contains)
+            logger.info("Database constraints and indexes initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize database constraints: {str(e)}")
+            raise Exception(f"Database initialization error: {str(e)}")
+
     async def assign_table(self, dt: pendulum.DateTime) -> int:
         """
         Assign a free table (1–2) with no orders overlapping ±45 min based on created_at.
@@ -52,27 +68,31 @@ class OrderManager:
         namespace = "OrderManager|assign_table"
         try:
             dt_utc = dt.in_timezone("UTC")
-            start = (dt_utc - timedelta(minutes=45)).isoformat()
-            end = (dt_utc + timedelta(minutes=45)).isoformat()
+            start = dt_utc - timedelta(minutes=config.TABLE_WINDOW_MINUTES)
+            end = dt_utc + timedelta(minutes=config.TABLE_WINDOW_MINUTES)
             logger.info(f"{namespace}: Assigning table for time {dt_utc} (UTC) with window {start} to {end}")
 
-            cypher = (
-                f"MATCH (o:Order)\n"
-                "WHERE o.table_id IS NOT NULL\n"
-                "AND o.created_at IS NOT NULL\n"
-                "AND $start <= datetime(o.created_at) <= $end\n"
-                "RETURN o.table_id AS table_id"
-            )
-            result = await self.driver.execute_query(
+            # Query orders with table_id and filter by created_at in PLACED relationship
+            # Note: Neomodel doesn't directly support filtering on relationship properties
+            # So we'll use a hybrid approach with a single optimized query
+            
+            cypher = """
+            MATCH (o:Order)<-[p:PLACED]-()
+            WHERE o.table_id IS NOT NULL
+            AND $start <= p.created_at <= $end
+            RETURN o.table_id AS table_id
+            """
+            
+            result = self.driver.execute_query(
                 cypher,
-                {"start": start, "end": end},
-                routing_control=RoutingControl.READ
+                {"start": start.isoformat(), "end": end.isoformat()},
+                routing_control="READ"
             )
             
             occupied = {int(record["table_id"]) for record in result.records if record["table_id"] is not None}
             logger.info(f"{namespace}: Occupied tables: {occupied}")
-            NUM_OF_TABLES = 2
-            for t in range(1, NUM_OF_TABLES + 1):
+            
+            for t in range(1, config.NUM_OF_TABLES + 1):
                 if t not in occupied:
                     logger.info(f"{namespace}: Assigned table {t} for time {dt_utc}")
                     return t
@@ -80,8 +100,7 @@ class OrderManager:
             logger.warning(f"{namespace}: No free tables found for time {dt_utc}")
             raise ValueError("No table free in the 90-minute window around the provided time.")
         
-        except ValueError as e:
-            logger.error(f"{namespace}: Table assignment failed: {str(e)}")
+        except ValueError:
             raise
         except Neo4jError as e:
             logger.error(f"{namespace}: Database error during table assignment for time {dt_utc}: {str(e)}")
@@ -111,7 +130,7 @@ class OrderManager:
                 logger.info(f"{namespace}: No dishes provided; proceeding with empty dish list")
                 return []
 
-            dish_data = {}
+            # Validate dish format
             for d in dishes:
                 if "id" not in d or "quantity" not in d:
                     logger.error(f"{namespace}: Invalid dish format: {d}")
@@ -119,38 +138,41 @@ class OrderManager:
                 if not isinstance(d["quantity"], int) or d["quantity"] <= 0:
                     logger.error(f"{namespace}: Invalid quantity for dish {d['id']}: {d['quantity']}")
                     raise ValueError(f"Quantity must be a positive integer for dish {d['id']}.")
-                dish_data[d["id"]] = d["quantity"]
 
-            dish_ids = list(dish_data.keys())
+            # Fetch all dishes at once for efficiency
+            dish_ids = [d["id"] for d in dishes]
             logger.info(f"{namespace}: Validating dishes: {dish_ids}")
 
-            cypher = """
-            UNWIND $dish_ids AS id
-            OPTIONAL MATCH (d:Dish {_id: id})
-            RETURN id, d.price AS price
-            """
-            result = await self.driver.execute_query(
-                cypher,
-                {"dish_ids": dish_ids},
-                routing_control=RoutingControl.READ
-            )
-
-            fetched_prices = {record["id"]: record["price"] for record in result.records}
-            missing_ids = [id for id in dish_ids if fetched_prices.get(id) is None]
+            # Use neomodel to fetch dishes
+            dish_nodes = Dish.nodes.filter(dish_id__in=dish_ids)
+            
+            # Create lookup dictionary
+            dish_dict = {dish.dish_id: dish for dish in dish_nodes}
+            
+            # Validate all dishes exist and prepare data
+            prepared_dishes = []
+            missing_ids = []
+            
+            for d in dishes:
+                dish_id = d["id"]
+                if dish_id in dish_dict:
+                    prepared_dishes.append({
+                        "id": dish_id,
+                        "quantity": d["quantity"],
+                        "price": float(dish_dict[dish_id].current_price or 0.0)
+                    })
+                else:
+                    missing_ids.append(dish_id)
+            
             if missing_ids:
                 logger.error(f"{namespace}: Dish IDs not found: {missing_ids}")
                 raise ValueError(f"Dish IDs not found: {', '.join(missing_ids)}")
 
-            prepared_dishes = [
-                {"id": id, "quantity": int(dish_data[id]), "price": float(fetched_prices[id])}
-                for id in dish_ids
-            ]
             logger.info(f"{namespace}: Dishes validated and prepared successfully: {len(prepared_dishes)} dishes")
             return prepared_dishes
 
-        except ValueError as e:
-            logger.error(f"{namespace}: Validation error for dishes: {str(e)}")
-            raise ValueError(f"Failed to validate and prepare dishes: {str(e)}")
+        except ValueError:
+            raise
         except Neo4jError as e:
             logger.error(f"{namespace}: Database error during dish validation: {str(e)}")
             raise Exception(f"Database error while validating dishes: {str(e)}")
@@ -200,7 +222,7 @@ class OrderManager:
                 raise ValueError("Guest ID, name, and phone number are required.")
             
             # Handle datetime
-            dt_utc = dt.in_timezone("UTC").isoformat()
+            dt_utc = dt.in_timezone("UTC")
             logger.info(f"{namespace}: Creating order for guest {guest_id} at {dt_utc} (UTC)")
 
             # Validate and prepare dishes (fetch prices if dishes provided)
@@ -227,91 +249,75 @@ class OrderManager:
                     logger.error(f"{namespace}: Unexpected error assigning table for guest {guest_id}: {str(e)}")
                     raise Exception(f"Failed to assign table: {str(e)}")
 
-            # Create or update Customer node
-            customer_cypher = """
-            MERGE (c:Customer {_id: $guest_id})
-            ON CREATE SET 
-                c.full_name = $full_name,
-                c.phone = CASE WHEN $phone IS NULL THEN [] ELSE [$phone] END,
-                c.email = $email,
-                c.notes = $notes
-            ON MATCH SET 
-                c.full_name = $full_name,
-                c.phone = CASE 
-                            WHEN $phone IS NULL THEN c.phone 
-                            ELSE apoc.coll.toSet(c.phone + [$phone]) 
-                        END,
-                c.email = CASE WHEN $email IS NULL THEN c.email ELSE $email END,
-            """
+            # Get or create customer using neomodel
             try:
-                await self.driver.execute_query(
-                    customer_cypher,
-                    {
-                        "guest_id": guest_id,
-                        "full_name": guest_name,
-                        "phone": guest_phone_number,
-                        "email": email
-                    },
-                    routing_control=RoutingControl.WRITE
-                )
-                logger.info(f"{namespace}: Customer {guest_id} created/updated successfully")
+                customer = Customer.nodes.get_or_none(customer_id=guest_id)
+                if customer is None:
+                    customer = Customer(
+                        customer_id=guest_id,
+                        full_name=guest_name,
+                        phone=[guest_phone_number] if guest_phone_number else [],
+                        email=email
+                    ).save()
+                    logger.info(f"{namespace}: Created new customer {guest_id}")
+                else:
+                    # Update existing customer
+                    customer.full_name = guest_name
+                    if email:
+                        customer.email = email
+                    # Merge phone numbers
+                    if guest_phone_number and guest_phone_number not in customer.phone:
+                        customer.phone = list(set(customer.phone + [guest_phone_number]))
+                    customer.save()
+                    logger.info(f"{namespace}: Updated existing customer {guest_id}")
             except Neo4jError as e:
                 logger.error(f"{namespace}: Database error creating/updating customer {guest_id}: {str(e)}")
                 raise Exception(f"Failed to create/update customer: {str(e)}")
 
-            # Create Order node and relationships (skip dish relationships if no dishes)
+            # Create order using neomodel
             order_id = str(uuid.uuid4())
-            order_cypher = """
-            MATCH (c:Customer {_id: $customer_id})
-            CREATE (o:Order {
-                _id: $order_id,
-                total_bill: $total_bill,
-                is_takeaway: $is_takeaway,
-                is_pre_paid: $is_pre_paid,
-                table_id: $table_id,
-                created_at: $created_at
-            })
-            MERGE (c)-[:PLACED]->(o)
-            """
-            params = {
-                "customer_id": guest_id,
-                "order_id": order_id,
-                "total_bill": total_cost,
-                "is_takeaway": is_takeaway,
-                "is_pre_paid": False,
-                "table_id": table_id,
-                "created_at": dt_utc
-            }
-            
-            if prepared_dishes:
-                order_cypher += """
-                WITH o
-                UNWIND $dishes AS d
-                MATCH (dish:Dish {_id: d.id})
-                MERGE (o)-[r:CONTAINS]->(dish)
-                SET r.quantity = d.quantity, r.price = d.price
-                """
-                params["dishes"] = prepared_dishes
-                logger.info(f"{namespace}: Adding {len(prepared_dishes)} CONTAINS relationships with quantities: {[d['quantity'] for d in prepared_dishes]}")
-            
-            order_cypher += """
-            RETURN elementId(o) AS order_neo4j_id, o._id AS order_id
-            """
-            
             try:
-                result = await self.driver.execute_query(
-                    order_cypher,
-                    params,
-                    routing_control=RoutingControl.WRITE
-                )
-                logger.info(f"{namespace}: Order {order_id} created successfully for guest {guest_id}")
-                return order_id, table_id
+                order = Order(
+                    order_id=order_id,
+                    total_bill=total_cost,
+                    is_takeaway=is_takeaway,
+                    is_pre_paid=False,
+                    table_id=table_id,
+                    notes=notes
+                ).save()
+                logger.info(f"{namespace}: Created order {order_id}")
             except Neo4jError as e:
-                logger.error(f"{namespace}: Database error creating order {order_id} for guest {guest_id}: {str(e)}")
+                logger.error(f"{namespace}: Database error creating order {order_id}: {str(e)}")
                 raise Exception(f"Failed to create order: {str(e)}")
+
+            # Create PLACED relationship with timestamps
+            try:
+                rel = Placed(arrived_at=dt, created_at=dt_utc)
+                customer.placed.connect(order, rel)
+                logger.info(f"{namespace}: Created PLACED relationship between customer {guest_id} and order {order_id}")
+            except Exception as e:
+                logger.error(f"{namespace}: Error creating PLACED relationship: {str(e)}")
+                raise Exception(f"Failed to create customer-order relationship: {str(e)}")
+
+            # Create CONTAINS relationships for dishes
+            if prepared_dishes:
+                try:
+                    for dish_data in prepared_dishes:
+                        dish = Dish.nodes.get(dish_id=dish_data["id"])
+                        contains_rel = Contains(
+                            quantity=dish_data["quantity"],
+                            price=dish_data["price"]
+                        )
+                        order.items.connect(dish, contains_rel)
+                    logger.info(f"{namespace}: Created {len(prepared_dishes)} CONTAINS relationships")
+                except Exception as e:
+                    logger.error(f"{namespace}: Error creating CONTAINS relationships: {str(e)}")
+                    raise Exception(f"Failed to create dish relationships: {str(e)}")
+
+            logger.info(f"{namespace}: Order {order_id} created successfully for guest {guest_id}")
+            return order_id, table_id
         
-        except ValueError as e:
-            logger.error(f"{namespace}: Validation error for guest {guest_id}: {str(e)}")
+        except ValueError:
             raise
         except Exception as e:
             logger.error(f"{namespace}: Unexpected error creating order for guest {guest_id}: {str(e)}")
@@ -327,22 +333,19 @@ async def create_test_dishes(driver):
     """Create test Dish nodes for the demo."""
     namespace = "Demo|create_test_dishes"
     try:
-        cypher = """
-        MERGE (d:Dish {_id: $id})
-        SET d.price = $price
-        """
-        dishes = [
-            {"id": "dish1", "price": 100_000},
-            {"id": "dish2", "price": 50_000}
+        # Use neomodel to create test dishes
+        dishes_data = [
+            {"dish_id": "dish1", "current_price": 100000.0, "name_of_food": "Test Dish 1"},
+            {"dish_id": "dish2", "current_price": 50000.0, "name_of_food": "Test Dish 2"}
         ]
-        for dish in dishes:
-            await driver.execute_query(
-                cypher,
-                dish,
-                routing_control=RoutingControl.WRITE
-            )
+        
+        for dish_data in dishes_data:
+            dish = Dish.nodes.get_or_none(dish_id=dish_data["dish_id"])
+            if dish is None:
+                Dish(**dish_data).save()
+        
         logger.info(f"{namespace}: Test dishes created successfully")
-    except Neo4jError as e:
+    except Exception as e:
         logger.error(f"{namespace}: Failed to create test dishes: {str(e)}")
         raise
 
@@ -350,7 +353,7 @@ async def demo():
     namespace = "Demo|demo"
     driver = AsyncGraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "12345678"))  # Replace with your credentials
     manager = OrderManager(driver)
-    await manager.initialize(refresh_database=True)  # Use with caution: Refreshes the database
+    await manager.initialize()  # Initialize constraints
     
     try:
         # Create test dishes
@@ -414,8 +417,6 @@ async def demo():
     except Exception as e:
         logger.error(f"{namespace}: Demo failed: {str(e)}")
         print(f"Demo failed: {str(e)}")
-    # finally:
-    #     await manager.close()  # Commented out as close method is not defined
 
 if __name__ == "__main__":
     import asyncio

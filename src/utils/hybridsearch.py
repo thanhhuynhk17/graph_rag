@@ -208,7 +208,7 @@ def load_neo4j_documents() -> List[Document]:
     ]
 
 from pyvi import ViTokenizer, ViPosTagger
-from src.utils.helpers import helpers
+from src.utils import helpers
 from underthesea import word_tokenize
 
 def bm25_preprocessing_func(text: str) -> List[str]:

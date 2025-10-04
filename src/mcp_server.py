@@ -1,32 +1,56 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastmcp import FastMCP
-from langchain_mcp_adapters.tools import to_fastmcp
-from neo4j import AsyncGraphDatabase
-from sentence_transformers import SentenceTransformer
+from fastapi import FastAPI
+
+from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from dotenv import load_dotenv
 # from underthesea import word_tokenize, pos_tag
-from src.utils.hybridsearch import run_hybrid_search
 from datetime import datetime
-import os, uuid, json
+import uuid, json
 from typing import ClassVar, Annotated, Literal, Dict, Optional, Any, List, Type
+import re
+import pandas as pd # test
+from contextlib import asynccontextmanager
+
+from src.models.order_manager import OrderManager
+from src.utils.hybridsearch import run_hybrid_search
 from src.utils.schemas import (
     SearchTypeCategory
 )
-import re
-
-import pandas as pd # test
-
-from contextlib import asynccontextmanager
-from src.neo4j_manager.order_manager import OrderManager
 # ---------------- CONFIG ----------------
-load_dotenv()
+from neomodel import config
+# Configure neomodel to use neomodel driver
+config.DATABASE_URL = f"bolt://{os.getenv('NEO4J_USER')}:{os.getenv('NEO4J_PASSWORD')}@{os.getenv('NEO4J_URI').replace('bolt://','')}/{os.getenv('NEO4J_DATABASE')}"
+# Ensure all DateTimes are provided with a timezone before being serialised to UTC epoch
+config.FORCE_TIMEZONE = True
+
+# Configure logging based on environment variable
+import logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # Default to INFO if not set
+logging_levels = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL
+}
+logging.basicConfig(
+    level=logging_levels.get(LOG_LEVEL, logging.INFO),  # Fallback to INFO if invalid
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+logger.info("Logging configured with level: %s", LOG_LEVEL)
 
 # ---------------- Lifespan ----------------
 @asynccontextmanager
-async def lifespan(server: FastMCP):
-    # --------------  start-up  -----------------
-    driver = AsyncGraphDatabase.driver(
+async def lifespan(app: FastAPI):
+    logger.info("Starting up FastMCP server lifespan...")
+
+    driver = GraphDatabase.driver(
         os.getenv("NEO4J_URI"),
         auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
     )
@@ -34,21 +58,22 @@ async def lifespan(server: FastMCP):
     # Initialize OrderManager instance for managing orders in Neo4j
     order_manager = OrderManager(driver)
     
-    # Attach both driver and order_manager to the server's state
-    server.state.driver = driver
-    server.state.order_manager = order_manager
+    # Attach both driver and order_manager to the fast api state
+    app.state.driver = driver
+    app.state.order_manager = order_manager
     
     try:
         yield
     finally:
         # Shutdown: Close the driver connection
+        logger.info("Shutting down FastMCP server lifespan...")
         await driver.close()
+        logger.info("Driver connection closed.")
 
 # ---------------- FastMCP server ----------------
-mcp = FastMCP(name="RestaurantMCP",
-    description="MCP for restaurant and dish info",
-    version="1.0.0",
-    lifespan=lifespan
+mcp = FastMCP(
+    name="RestaurantMCP",
+    version="1.0.0"
 )
 
 # ---------------- Models ----------------
@@ -84,40 +109,6 @@ async def hybrid_search(
         is_bm25_enable=True
     )
     return results
-
-@mcp.tool(name="search_database", description="Tìm món ăn theo tên, tag hoặc ingredient")
-def search_database(req: SearchReq) -> str:
-    # Build full-text query string in Python
-    phrase = req.query.strip()
-    words  = phrase.split()
-    phrase_part = f'({phrase})^3'          # boost cao nhất cho cụm nguyên
-    term_part   = f'({" OR ".join(words)})^1'  # mọi từ riêng
-    query = f'{phrase_part} OR {term_part}'
-
-    cypher = """
-        CALL db.index.fulltext.queryNodes('keyword', $query) YIELD node, score
-        RETURN node._id   AS id,
-               node._name AS name_food,
-               node.type_of_food AS type_food,
-               score
-        ORDER BY score DESC
-        LIMIT $k
-    """
-    records, _, _ = mcp.state.driver.execute_query(cypher, query=query, k=req.k)
-
-    if not records:
-        return "Không tìm thấy món nào phù hợp."
-
-    lines = [f"Top {len(records)} kết quả cho '{phrase}':"]
-    for r in records:
-        lines.append(
-            f"- ID: {r['id']}\n"
-            f"  + tên món: {r['name_food']}\n"
-            f"  + loại: {r['type_food'].lower()}\n"
-            f"  + độ phù hợp: {r['score']:.2f}"
-        )
-
-    return "\n".join(lines)
 
 @mcp.tool(
     name="multi_filter_category",
@@ -166,7 +157,7 @@ def multi_filter_category(categories: List[str], keywords: List[str]) -> str:
                         c.current_price AS price
         ORDER BY c._id
         """
-        records, _, _ = mcp.state.driver.execute_query(
+        records, _, _ = app.state.driver.execute_query(
             cypher,
             type_norm=type_norm,
             kw_regex=kw_regex
@@ -208,7 +199,7 @@ def menu_value_count_and_price() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = mcp.state.driver.execute_query(cypher)
+    records, _, _ = app.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -241,7 +232,7 @@ def menu_value_count_just_name() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = mcp.state.driver.execute_query(cypher)
+    records, _, _ = app.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -274,7 +265,7 @@ def hello_and_show_menu() -> str:
     ORDER BY count DESC
     """
     
-    records, _, _ = mcp.state.driver.execute_query(cypher)
+    records, _, _ = app.state.driver.execute_query(cypher)
 
     if not records:
         return "Hiện không có dữ liệu món ăn."
@@ -302,7 +293,7 @@ def search_food_price(food_ids: list[str]) -> str:
     WHERE c._id IN $ids
     RETURN c._id AS id, c._name AS name, c.current_price AS price
     """
-    records, _, _ = mcp.state.driver.execute_query(cypher, ids=food_ids)
+    records, _, _ = app.state.driver.execute_query(cypher, ids=food_ids)
 
     if not records:
         return "Không tìm thấy món ăn nào với ID đã nhập."
@@ -318,4 +309,21 @@ def search_food_price(food_ids: list[str]) -> str:
 # @mcp.tool(name="feedback_bill", description="Khách phản hồi → chuỗi noun-phrase")
 
 # ---------------- HTTP app ----------------
-app = mcp.http_app()
+# Create ASGI app
+mcp_app = mcp.http_app(
+    path='/mcp'
+)
+
+
+@asynccontextmanager
+async def combined_lifespan(app: FastAPI):
+    # Nest FastMCP lifespan inside app lifespan for proper order
+    async with lifespan(app):
+        async with mcp_app.lifespan(app):  # Handles MCP-specific startup/shutdown
+            yield
+
+# Pass lifespan to FastAPI
+app = FastAPI(lifespan=combined_lifespan)
+
+# Mount the MCP server
+app.mount("/", mcp_app)

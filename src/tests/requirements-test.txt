@@ -1,0 +1,9 @@
+# Test dependencies for the restaurant order management system
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0
+
+# Additional testing utilities
+faker>=15.0.0  # For generating fake test data
+freezegun>=1.2.0  # For mocking datetime in tests
