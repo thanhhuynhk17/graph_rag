@@ -207,7 +207,7 @@ def load_neo4j_documents() -> List[Document]:
         for doc in neo4j_docs
     ]
 
-from pyvi import ViTokenizer, ViPosTagger
+# from pyvi import ViTokenizer, ViPosTagger
 from src.utils import helpers
 from underthesea import word_tokenize
 
@@ -236,8 +236,9 @@ def bm25_preprocessing_func(text: str) -> List[str]:
     normalized = helpers.clean_vietnamese_text(normalized)
     # print("0.1:", normalized)
     normalized = ' '.join(word_tokenize(normalized))
-    # print("0.5:", normalized)
-    normalized = ViTokenizer.tokenize(normalized)
+    # TODO: remove pyvi
+    # # print("0.5:", normalized)
+    # normalized = ViTokenizer.tokenize(normalized)
     # print("1:", normalized)
     sequences = [str(helpers.normalize_record(text=seq)).lower() for seq in normalized.split(" , ")]
     # print("2:", sequences)

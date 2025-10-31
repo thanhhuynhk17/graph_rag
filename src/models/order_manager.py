@@ -132,32 +132,32 @@ class OrderManager:
 
             # Validate dish format
             for d in dishes:
-                if "id" not in d or "quantity" not in d:
+                if "dish_id" not in d or "quantity" not in d:
                     logger.error(f"{namespace}: Invalid dish format: {d}")
-                    raise ValueError("Each dish must have 'id' and 'quantity'.")
+                    raise ValueError("Each dish must have 'dish_id' and 'quantity'.")
                 if not isinstance(d["quantity"], int) or d["quantity"] <= 0:
-                    logger.error(f"{namespace}: Invalid quantity for dish {d['id']}: {d['quantity']}")
-                    raise ValueError(f"Quantity must be a positive integer for dish {d['id']}.")
+                    logger.error(f"{namespace}: Invalid quantity for dish {d['dish_id']}: {d['quantity']}")
+                    raise ValueError(f"Quantity must be a positive integer for dish {d['dish_id']}.")
 
             # Fetch all dishes at once for efficiency
-            dish_ids = [d["id"] for d in dishes]
+            dish_ids = [d["dish_id"] for d in dishes]
             logger.info(f"{namespace}: Validating dishes: {dish_ids}")
 
             # Use neomodel to fetch dishes
             dish_nodes = Dish.nodes.filter(dish_id__in=dish_ids)
-            
+
             # Create lookup dictionary
             dish_dict = {dish.dish_id: dish for dish in dish_nodes}
-            
+
             # Validate all dishes exist and prepare data
             prepared_dishes = []
             missing_ids = []
-            
+
             for d in dishes:
-                dish_id = d["id"]
+                dish_id = d["dish_id"]
                 if dish_id in dish_dict:
                     prepared_dishes.append({
-                        "id": dish_id,
+                        "dish_id": dish_id,
                         "quantity": d["quantity"],
                         "price": float(dish_dict[dish_id].current_price or 0.0)
                     })
@@ -292,8 +292,7 @@ class OrderManager:
 
             # Create PLACED relationship with timestamps
             try:
-                rel = Placed(arrived_at=dt, created_at=dt_utc)
-                customer.placed.connect(order, rel)
+                customer.placed.connect(order, {'arrived_at': dt, 'created_at': dt_utc})
                 logger.info(f"{namespace}: Created PLACED relationship between customer {guest_id} and order {order_id}")
             except Exception as e:
                 logger.error(f"{namespace}: Error creating PLACED relationship: {str(e)}")
@@ -303,12 +302,8 @@ class OrderManager:
             if prepared_dishes:
                 try:
                     for dish_data in prepared_dishes:
-                        dish = Dish.nodes.get(dish_id=dish_data["id"])
-                        contains_rel = Contains(
-                            quantity=dish_data["quantity"],
-                            price=dish_data["price"]
-                        )
-                        order.items.connect(dish, contains_rel)
+                        dish = Dish.nodes.get(dish_id=dish_data["dish_id"])
+                        order.items.connect(dish, {'quantity': dish_data["quantity"], 'price': dish_data["price"]})
                     logger.info(f"{namespace}: Created {len(prepared_dishes)} CONTAINS relationships")
                 except Exception as e:
                     logger.error(f"{namespace}: Error creating CONTAINS relationships: {str(e)}")
@@ -368,20 +363,20 @@ async def demo():
             guest_name="Early Bird",
             guest_phone_number="0900000001",
             is_takeaway=False,
-            dishes=[{"id": "dish1", "quantity": 1}, {"id": "dish2", "quantity": 2}],
+            dishes=[{"dish_id": "dish1", "quantity": 1}, {"dish_id": "dish2", "quantity": 2}],
             dt=dt,
             email="early@bird.com",
             notes="No spicy food"
         )
         print(f"First order ID: {order_id1}, Table: {table_id1}")  # Expected table: 1
-        
+
         # Order 2: Dine-in with dishes, close in time (should get different table)
         order_id2, table_id2 = await manager.create_order(
             guest_id="guest2",
             guest_name="Overlap",
             guest_phone_number="0900000002",
             is_takeaway=False,
-            dishes=[{"id": "dish1", "quantity": 1}],
+            dishes=[{"dish_id": "dish1", "quantity": 1}],
             dt=dt,
             email="overlap@bird.com",
             notes="Extra napkins"
@@ -394,7 +389,7 @@ async def demo():
             guest_name="Takeaway",
             guest_phone_number="0900000003",
             is_takeaway=True,
-            dishes=[{"id": "dish2", "quantity": 1}],
+            dishes=[{"dish_id": "dish2", "quantity": 1}],
             dt=dt,
             email="takeaway@bird.com",
             notes="Pack quickly"

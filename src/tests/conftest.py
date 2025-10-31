@@ -75,8 +75,8 @@ def sample_dish_data() -> List[Dict]:
     """Sample dish data for testing."""
     return [
         {
-            "dish_id": "dish_001",
-            "type_of_food": "MÓN KHAI VỊ",
+            "dish_id": "dish1",
+            "type_of_food": "món khai vị",
             "name_of_food": "Bánh xèo",
             "how_to_prepare": "Đổ bột gạo pha nước cốt dừa, chiên vàng giòn cùng topping",
             "main_ingredients": "Bột gạo, tôm, thịt ba chỉ, giá đỗ",
@@ -87,8 +87,8 @@ def sample_dish_data() -> List[Dict]:
             "combine_info": "MÓN KHAI VỊ, Bánh xèo, Đổ bột gạo pha nước cốt dừa, chiên vàng giòn cùng topping, Bột gạo, tôm, thịt ba chỉ, giá đỗ, Đồ béo, Thơm và béo của nước cốt dừa hoà quyện cùng topping (tôm, thịt,), 2-3 người"
         },
         {
-            "dish_id": "dish_002",
-            "type_of_food": "MÓN THỊT",
+            "dish_id": "dish2",
+            "type_of_food": "món thịt",
             "name_of_food": "Thịt kho tiêu",
             "how_to_prepare": "Thịt heo thái miếng vừa, ướp nước mắm, đường, tiêu rồi kho đến khi thấm gia vị",
             "main_ingredients": "Thịt heo, nước mắm, đường, tiêu",
@@ -151,7 +151,7 @@ def create_test_dish(data: Dict = None) -> 'Dish':
     if data is None:
         data = {
             "dish_id": "test_dish_util",
-            "type_of_food": "MÓN KHAI VỊ",
+            "type_of_food": "món khai vị",
             "name_of_food": "Test Dish",
             "current_price": 100000.0,
             "combine_info": "Test dish for unit testing"

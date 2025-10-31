@@ -10,7 +10,7 @@ from underthesea import (
     word_tokenize as uts_word_tokenize,
     pos_tag,
 )
-from pyvi import ViTokenizer, ViPosTagger
+# from pyvi import ViTokenizer, ViPosTagger
 
 class AbbreviationProcessor:
     """
@@ -438,11 +438,12 @@ class AbbreviationProcessor:
     # ------------------------------------------------------------------
     # 3. Tokenize
     # ------------------------------------------------------------------
+    # TODO: remove pyvi
     def tokenize(self, text: str) -> List[str]:
         """underthesea.word_tokenize + pyvi.ViTokenizer."""
         tokens = uts_word_tokenize(text)
-        text = " ".join(tokens)
-        tokens = ViTokenizer.tokenize(text).split()
+        # text = " ".join(tokens)
+        # tokens = ViTokenizer.tokenize(text).split()
         return tokens
 
     # ------------------------------------------------------------------

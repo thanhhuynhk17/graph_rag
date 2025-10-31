@@ -1,7 +1,7 @@
-from src.utils.helpers import VietnameseTextProcessor, Helpers
+# from src.utils.helpers import VietnameseTextProcessor, Helpers
 
 # Initialize singletons
-processor = VietnameseTextProcessor()
-helpers = Helpers()
+# processor = VietnameseTextProcessor()
+# helpers = Helpers()
 
-__all__ = ["processor", "helpers"]
+# __all__ = ["processor", "helpers"]
