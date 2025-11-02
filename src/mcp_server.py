@@ -1,11 +1,42 @@
+"""
+Restaurant MCP Server - Dual API Architecture
+
+This module implements a FastMCP server that provides both MCP (Model Context Protocol)
+tools and traditional REST API endpoints for restaurant order management.
+
+Architecture:
+- FastMCP: Modern protocol for AI assistants and tools
+- FastAPI: Traditional REST API for web/mobile clients
+- Shared Business Logic: OrderService ensures consistency between interfaces
+
+Key Components:
+- MCP Tools: take_order, multi_dish_lookup, menu_value_count_and_price
+- REST Endpoints: /api/orders, /api/customers/{id}/orders
+- Lifespan Management: Database initialization and cleanup
+- CORS Support: Frontend integration capabilities
+
+Neomodel Integration:
+- Database connection management via neomodel.config
+- Transaction handling for data consistency
+- Batch operations for performance
+
+Environment Configuration:
+- Database connections via environment variables
+- Auto-loading of dish data on startup
+- Configurable logging levels
+- Safety checks for data operations
+"""
+
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
+# FastMCP imports for Model Context Protocol implementation
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult, TextContent
 from fastmcp.server.dependencies import get_context
 
+# FastAPI imports for REST API implementation
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
@@ -19,7 +50,7 @@ import json
 import uuid
 import pendulum
 
-from src.models.order_manager import OrderManager
+# Local imports for business logic and data models
 from src.utils.hybridsearch import run_hybrid_search
 from src.utils.order_service import OrderService
 from src.utils.schemas import (
@@ -59,21 +90,38 @@ logger.info("Logging configured with level: %s", LOG_LEVEL)
 def clear_database_schema() -> bool:
     """
     Clear all database constraints, indexes, and data.
-    Returns True if successful, False if failed.
+
+    This function performs a complete database reset by:
+    1. Dropping all constraints and indexes via APOC
+    2. Deleting all relationships (must come before nodes)
+    3. Deleting all nodes
+    4. Verifying the database is clean
+
+    Used during development for data reloading and testing.
+
+    Performance: Uses raw Cypher for bulk operations that would be
+    inefficient with ORM methods. Deletes relationships first to avoid
+    constraint violations.
+
+    Safety: Includes verification step to ensure complete cleanup.
+
+    Returns:
+        bool: True if successful, False if verification failed
     """
     try:
         logger.info("Starting database schema cleanup...")
 
         # Step 1: Drop all constraints and indexes using APOC
+        # Performance: APOC procedures are optimized for bulk schema operations
         try:
             # Drop all property uniqueness constraints
             db.cypher_query("CALL apoc.schema.assert({}, {})")
             logger.info("✓ Dropped all constraints and indexes")
         except Exception as e:
             logger.warning(f"Could not drop constraints via APOC: {str(e)}")
-            # Fallback: Try to drop specific constraints manually
+            # Fallback: Manual constraint dropping for older Neo4j versions
             try:
-                # Get all constraints
+                # Get all constraints and drop them individually
                 constraints_result = db.cypher_query("SHOW CONSTRAINTS")
                 if constraints_result and constraints_result[0]:
                     for constraint in constraints_result[0]:
@@ -90,12 +138,13 @@ def clear_database_schema() -> bool:
                 logger.warning(f"Could not drop constraints manually either: {str(e2)}")
 
         # Step 2: Delete all nodes and relationships
+        # Critical: Delete relationships BEFORE nodes to avoid constraint violations
         try:
-            # Delete all relationships first
+            # Delete all relationships first (prevents dangling references)
             db.cypher_query("MATCH ()-[r]-() DELETE r")
             logger.info("✓ Deleted all relationships")
 
-            # Delete all nodes
+            # Delete all nodes (now safe since no relationships exist)
             db.cypher_query("MATCH (n) DELETE n")
             logger.info("✓ Deleted all nodes")
 
@@ -104,6 +153,7 @@ def clear_database_schema() -> bool:
             return False
 
         # Step 3: Verify database is clean
+        # Safety: Always verify destructive operations completed successfully
         try:
             node_count = db.cypher_query("MATCH (n) RETURN count(n) as count")[0][0]['count']
             rel_count = db.cypher_query("MATCH ()-[r]-() RETURN count(r) as count")[0][0]['count']
@@ -133,12 +183,8 @@ async def lifespan(app: FastAPI):
         auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
     )
 
-    # Initialize OrderManager instance for managing orders in Neo4j
-    order_manager = OrderManager(driver)
-
-    # Attach both driver and order_manager to the fast api state
+    # Attach driver to the FastAPI state for Neo4j access
     app.state.driver = driver
-    app.state.order_manager = order_manager
 
     # Auto-load dishes if enabled
     auto_load_dishes = os.getenv("AUTO_LOAD_DISHES", "false").lower() == "true"
