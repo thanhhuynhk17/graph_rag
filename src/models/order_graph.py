@@ -1,3 +1,33 @@
+"""
+Order Graph Models - Neomodel-based Graph Database Schema
+
+This module defines the core graph data model for the restaurant ordering system
+using Neomodel ORM. It implements a graph-first approach where:
+
+- Customer nodes connect to Order nodes via PLACED relationships
+- Order nodes connect to Dish nodes via CONTAINS relationships
+- Relationships store temporal and quantitative data
+
+Key Neomodel Patterns Used:
+- StructuredNode: For entity nodes (Customer, Order, Dish)
+- StructuredRel: For relationship properties (Placed, Contains)
+- Cardinality constraints: One-to-many relationships with validation
+- Unique indexes: For efficient lookups and data integrity
+- Batch operations: For efficient bulk data loading
+
+Business Logic:
+- Customer management with phone number merging
+- Order placement with table assignment and dish validation
+- Real-time pricing and inventory checking
+- Temporal conflict resolution for table bookings
+
+Error Handling:
+- Custom exception hierarchy for different error types
+- Validation errors for business rule violations
+- Database errors for connectivity/integrity issues
+- Resource not found errors for missing entities
+"""
+
 from neomodel import (ArrayProperty, BooleanProperty, DateTimeProperty,
                     FloatProperty, IntegerProperty, RelationshipTo,
                     StringProperty, StructuredNode, StructuredRel,
@@ -16,80 +46,178 @@ from .config import RestaurantConfig
 
 load_dotenv()
 
-
-# Configure logging
+# Configure logging for database operations and business logic
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Custom Exceptions
+# Custom Exception Hierarchy
+# Following Neomodel best practices for structured error handling
 
 
 class OrderGraphError(Exception):
-    """Base exception for all order graph errors."""
+    """
+    Base exception for all order graph errors.
+
+    This allows catching all graph-related errors while still
+    being able to handle specific error types individually.
+    """
     pass
 
 
 class ValidationError(OrderGraphError):
-    """Raised when data validation fails."""
+    """
+    Raised when data validation fails.
+
+    Used for business rule violations like invalid quantities,
+    missing required fields, or constraint violations.
+    """
     pass
 
 
 class DatabaseError(OrderGraphError):
-    """Raised when database operations fail."""
+    """
+    Raised when database operations fail.
+
+    Covers connectivity issues, transaction failures, and
+    other database-level problems.
+    """
     pass
 
 
 class ResourceNotFoundError(OrderGraphError):
-    """Raised when a requested resource is not found."""
+    """
+    Raised when a requested resource is not found.
+
+    Used when querying for non-existent customers, orders, or dishes.
+    Differentiated from DatabaseError for better error handling.
+    """
     pass
 
 
 class Placed(StructuredRel):
-    """PLACED relationship between Customer and Order"""
+    """
+    PLACED relationship between Customer and Order nodes.
+
+    This relationship model stores temporal information about customer orders,
+    capturing both when the customer arrived at the restaurant and when the
+    order was actually created in the system.
+
+    Neomodel Pattern: StructuredRel allows storing properties on relationships
+    rather than just having simple relationship types. This enables rich
+    temporal queries and audit trails.
+
+    Properties:
+        arrived_at: When customer physically arrived (required for table assignment)
+        created_at: When order was recorded in system (auto-generated)
+
+    Usage:
+        customer.placed.connect(order, {
+            'arrived_at': pendulum.now(),
+            'created_at': pendulum.now('UTC')
+        })
+    """
     arrived_at = DateTimeProperty()  # When customer arrived at restaurant
     created_at = DateTimeProperty(default_now=True)  # When order was created
 
     def validate_datetime(self):
         """
-        Validate datetime properties.
-        - arrived_at must be provided
-        - created_at defaults to current time
+        Validate datetime properties for data integrity.
+
+        Business Rules:
+        - arrived_at must be provided (required for table assignment logic)
+        - created_at defaults to current UTC time if not provided
+
+        This validation ensures temporal consistency for order processing
+        and table conflict resolution algorithms.
 
         Raises:
-            ValidationError: If datetime validation fails
+            ValidationError: If arrived_at is missing or invalid
         """
         if not self.arrived_at:
-            raise ValidationError("arrived_at datetime must be provided")
+            raise ValidationError("arrived_at datetime must be provided for table assignment")
 
+        # Ensure created_at has a value (should be auto-set by default_now=True)
         if not self.created_at:
             self.created_at = pendulum.now("UTC")
 
 
 class Contains(StructuredRel):
-    """CONTAINS relationship between Order and Dish"""
+    """
+    CONTAINS relationship between Order and Dish nodes.
+
+    This relationship represents which dishes are included in an order,
+    along with their quantities and the price at the time of ordering.
+    The price is stored historically to maintain order integrity even
+    if dish prices change later.
+
+    Neomodel Pattern: StructuredRel enables storing transactional data
+    directly on relationships, avoiding the need for separate junction tables.
+
+    Properties:
+        quantity: Number of this dish ordered (must be positive integer)
+        price: Price per unit at time of order (preserves historical pricing)
+
+    Business Logic:
+    - Quantity validation prevents negative/zero orders
+    - Price preservation enables accurate historical reporting
+    - Relationship-level validation ensures data consistency
+    """
     quantity = IntegerProperty(required=True)
     price = FloatProperty(required=True)  # Price at the time of order
 
     def validate(self):
         """
-        Validate relationship properties.
+        Validate relationship properties for business rule compliance.
+
+        Business Rules:
+        - Quantity must be positive integer (no negative orders)
+        - Price must be positive (no free or negative priced items)
+        - Type checking prevents data corruption
+
+        This validation runs automatically during relationship creation
+        to maintain data integrity at the relationship level.
 
         Raises:
-            ValidationError: If validation fails
+            ValidationError: If any business rules are violated
         """
         if self.quantity <= 0:
-            raise ValidationError("Quantity must be positive")
+            raise ValidationError("Order quantity must be positive")
         if self.price <= 0:
-            raise ValidationError("Price must be positive")
+            raise ValidationError("Dish price must be positive")
         if not isinstance(self.quantity, int):
             raise ValidationError("Quantity must be an integer")
 
 
 class Customer(StructuredNode):
-    """Customer node representing restaurant patrons"""
+    """
+    Customer node representing restaurant patrons.
+
+    This node stores customer information and serves as the starting point
+    for order relationships. It implements a "get or create" pattern to
+    handle customer merging based on phone numbers.
+
+    Neomodel Patterns:
+    - StructuredNode: Provides automatic property validation and indexing
+    - unique_index: Ensures customer_id uniqueness for efficient lookups
+    - ArrayProperty: Stores multiple phone numbers for the same customer
+
+    Business Logic:
+    - Phone number merging: Multiple visits with different phones are merged
+    - Order history: Connected to all orders via PLACED relationships
+    - Identity resolution: customer_id serves as primary identifier
+
+    Properties:
+        customer_id: Unique identifier (string, indexed)
+        full_name: Customer's full name (required)
+        phone: Array of phone numbers for merging
+        email: Optional contact email
+
+    Relationships:
+        placed: One-to-many relationship to Order nodes via PLACED relationships
+    """
     customer_id = StringProperty(unique_index=True)
     full_name = StringProperty(required=True)
     phone = ArrayProperty(StringProperty(), default=[])
@@ -207,7 +335,36 @@ class Customer(StructuredNode):
 
 
 class Order(StructuredNode):
-    """Order node representing customer orders"""
+    """
+    Order node representing customer orders.
+
+    This node serves as the central entity for order management, connecting
+    customers to their ordered dishes through relationship properties.
+    It handles table assignment, takeaway orders, and payment status.
+
+    Neomodel Patterns:
+    - StructuredNode: Automatic validation and indexing
+    - unique_index on order_id: Prevents duplicate orders
+    - RelationshipTo with StructuredRel: Rich relationship data
+
+    Business Logic:
+    - Table assignment with temporal conflict resolution
+    - Dish validation and pricing at order time
+    - Total calculation with historical price preservation
+    - Support for both dine-in and takeaway orders
+
+    Properties:
+        order_id: Unique order identifier (string, indexed)
+        total_bill: Total amount due (calculated from dishes)
+        is_takeaway: True for takeaway, False for dine-in
+        is_pre_paid: Payment status flag
+        table_id: Assigned table number (None for takeaway)
+        notes: Optional order notes
+
+    Relationships:
+        items: Many-to-many relationship to Dish nodes via CONTAINS relationships
+               (stores quantity and historical price per dish)
+    """
     order_id = StringProperty(unique_index=True, required=True)
     total_bill = FloatProperty(required=True)
     is_takeaway = BooleanProperty(default=False)
@@ -224,6 +381,12 @@ class Order(StructuredNode):
         Assign a free table based on the configuration settings.
         Checks for tables with no orders overlapping ±45 min based on created_at.
 
+        This implements temporal conflict resolution for table bookings.
+        Uses a sliding window approach to prevent double-bookings.
+
+        Performance: Uses raw Cypher for complex temporal queries that would be
+        inefficient with ORM traversal. Single query vs multiple round-trips.
+
         Args:
             dt (pendulum.DateTime): The datetime to check for table availability
             config (RestaurantConfig): Restaurant configuration settings
@@ -237,6 +400,7 @@ class Order(StructuredNode):
         """
         try:
             dt_utc = dt.in_timezone("UTC")
+            # Calculate 90-minute window (±45 min) for table conflict checking
             window_start = dt_utc - \
                 pendulum.duration(minutes=config.TABLE_WINDOW_MINUTES)
             window_end = dt_utc + \
@@ -245,7 +409,9 @@ class Order(StructuredNode):
             logger.info(
                 f"Assigning table for time {dt_utc} (UTC) with window {window_start} to {window_end}")
 
-            # Query orders with table_id and filter by created_at in PLACED relationship
+            # Raw Cypher query for temporal range filtering
+            # Note: ORM traversal would require loading all Order nodes first,
+            # which is inefficient for range queries. Cypher handles this optimally.
             cypher = """
             MATCH (o:Order)<-[p:PLACED]-()
             WHERE o.table_id IS NOT NULL
@@ -259,18 +425,21 @@ class Order(StructuredNode):
             }
 
             results, _ = db.cypher_query(cypher, params)
+            # Extract occupied table numbers, filtering out NULL values
             occupied_tables = {
                 int(record[0]) for record in results if record[0] is not None}
 
-            logger.info(f"Occupied tables: {occupied_tables}")
+            logger.info(f"Occupied tables in time window: {occupied_tables}")
 
-            # Find first available table
+            # Find first available table (simple linear search)
+            # Could be optimized with a set difference, but N is small (typically < 50)
             for table_num in range(1, config.NUM_OF_TABLES + 1):
                 if table_num not in occupied_tables:
                     logger.info(
                         f"Assigned table {table_num} for time {dt_utc}")
                     return table_num
 
+            # No tables available in the time window
             logger.warning(f"No free tables found for time {dt_utc}")
             raise ValidationError(
                 f"No table free in the {config.TABLE_WINDOW_MINUTES * 2} minute window around {dt}")
@@ -287,6 +456,9 @@ class Order(StructuredNode):
         Validate dishes and fetch their current prices.
         Allows empty dishes list for table reservations.
 
+        Performance: Batch fetches all dishes at once to prevent N+1 query problem.
+        Uses dictionary lookup for O(1) access after initial fetch.
+
         Args:
             dishes (List[Dict]): List of dishes with 'dish_id' and 'quantity'
 
@@ -302,7 +474,7 @@ class Order(StructuredNode):
             return []
 
         try:
-            # Validate format
+            # Input validation - ensure proper format
             for dish in dishes:
                 if not isinstance(dish, dict) or 'dish_id' not in dish or 'quantity' not in dish:
                     raise ValidationError(
@@ -311,20 +483,23 @@ class Order(StructuredNode):
                     raise ValidationError(
                         f"Invalid quantity for dish {dish['dish_id']}: {dish['quantity']}")
 
-            # Fetch all dishes at once
+            # Batch fetch all dishes at once - prevents N+1 queries
+            # Performance: Single query instead of len(dishes) individual queries
             dish_ids = [d['dish_id'] for d in dishes]
             dish_nodes = Dish.nodes.filter(dish_id__in=dish_ids)
 
-            # Create lookup dictionary
+            # Create O(1) lookup dictionary for fast access
+            # Memory: Small overhead but significant performance gain
             dish_dict = {d.dish_id: d for d in dish_nodes}
 
-            # Validate and prepare
+            # Validate existence and prepare with current pricing
             prepared_dishes = []
             missing_ids = []
 
             for dish in dishes:
                 dish_id = dish['dish_id']
                 if dish_id in dish_dict:
+                    # Capture price at order time for historical accuracy
                     prepared_dishes.append({
                         'dish_id': dish_id,
                         'quantity': dish['quantity'],
@@ -333,6 +508,7 @@ class Order(StructuredNode):
                 else:
                     missing_ids.append(dish_id)
 
+            # Fail fast if any dishes are missing
             if missing_ids:
                 raise ResourceNotFoundError(
                     f"Dish IDs not found: {', '.join(missing_ids)}")
@@ -359,7 +535,42 @@ class Order(StructuredNode):
 
 
 class Dish(StructuredNode):
-    """Dish node representing menu items loaded from CSV"""
+    """
+    Dish node representing menu items loaded from CSV.
+
+    This node stores comprehensive dish information for the restaurant menu,
+    including pricing, preparation details, and search capabilities.
+    It serves as the target for order relationships and search queries.
+
+    Neomodel Patterns:
+    - StructuredNode: Automatic validation and indexing
+    - unique_index on dish_id: Prevents duplicate dishes
+    - fulltext_index on combine_info: Enables text search
+    - VectorIndex: Supports semantic similarity search
+
+    Business Logic:
+    - CSV-based bulk loading with error handling
+    - Price conversion from Vietnamese format ("145,000")
+    - Real-time availability checking for orders
+    - Search indexing for hybrid retrieval
+
+    Properties:
+        dish_id: Unique dish identifier (string, indexed)
+        type_of_food: Category/classification (required)
+        name_of_food: Display name (required)
+        how_to_prepare: Cooking instructions
+        main_ingredients: Key ingredients list
+        taste: Flavor profile description
+        outstanding_fragrance: Aroma characteristics
+        current_price: Current selling price (required)
+        number_of_people_eating: Serving size information
+        combine_info: Concatenated search text (fulltext indexed)
+        embedding: Vector representation for semantic search
+
+    Relationships:
+        Connected from Order nodes via CONTAINS relationships
+        (stores historical quantity and price per order)
+    """
     # Class level constants for CSV processing
     # For converting prices like "145,000" to float
     PRICE_MULTIPLIER: ClassVar[float] = 1000.0
