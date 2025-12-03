@@ -1,5 +1,0 @@
-feedback_id,customer_id,target_type,target_id,rating,comment,tasted_good,would_reorder,created_at
-FB004,C003,DISH,1,5,"giòn, thơm",true,true,2025-09-23T12:35:00
-FB005,C004,DISH,2,4,"hơi ngấy",true,false,2025-09-23T13:05:00
-FB006,C005,BILL,O5,3,"chờ lâu",,,2025-09-23T19:10:00
-FB303,C102,BILL,O202,5,"nhanh & nóng",,,2025-09-30T21:00:00

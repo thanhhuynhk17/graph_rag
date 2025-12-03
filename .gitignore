@@ -1,6 +1,8 @@
 # Neo4j data
 neo4j/data/
 neo4j/config/
+src/data/csv
+
 # ---- Python ----
 **/__pycache__/
 *.pyc
