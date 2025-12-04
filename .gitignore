@@ -2,8 +2,11 @@
 neo4j/data/
 neo4j/config/
 src/data/csv
+src/data/comque_new_enriched.csv
+src/data/raw
 
-# ---- Python ----
+#
+ ---- Python ----
 **/__pycache__/
 *.pyc
 *.pyo

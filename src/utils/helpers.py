@@ -5,7 +5,7 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Protocol
-from underthesea import word_tokenize, pos_tag
+# from underthesea import pos_tag
 
 import pandas as pd
 import requests
@@ -82,13 +82,13 @@ class VietnameseTextProcessor:
             content = text
 
         # POS tagging
-        pos_tags = pos_tag(content)  # nhận str, trả [(word, pos), ...]
+        # pos_tags = pos_tag(content)  # nhận str, trả [(word, pos), ...]
 
         # Lọc: chỉ loại bỏ khi vừa là stop-word vừa KHÔNG phải danh từ
         filtered = [
             word
-            for word, pos in pos_tags
-            if word.lower() not in stop_words or pos.startswith("N")
+            for word in content.split()
+                if word.lower() not in stop_words
         ]
 
         cleaned = " ".join(filtered)

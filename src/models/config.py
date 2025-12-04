@@ -5,3 +5,9 @@ class RestaurantConfig(NamedTuple):
     NUM_OF_TABLES: int = 2
     TABLE_WINDOW_MINUTES: int = 45
     TIMEZONE: str = "Asia/Ho_Chi_Minh"
+    
+class UniteProductConfig(NamedTuple):
+    """Configuration for restaurant order management."""
+    NUM_OF_TABLES: int = 2
+    TABLE_WINDOW_MINUTES: int = 45
+    TIMEZONE: str = "Asia/Ho_Chi_Minh"
