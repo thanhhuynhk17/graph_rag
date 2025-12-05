@@ -1,8 +1,17 @@
 import re
 import unicodedata
 import pandas as pd
+from dotenv import load_dotenv
+import os
+
+# Access environment variables
+load_dotenv()
+PATH_SOURCE_CSV = os.getenv("PATH_SOURCE_CSV")
 
 class Helpers:
+    
+    def __init__(self):
+        self.path = PATH_SOURCE_CSV
     
     # VietnameseToneNormalization.md
     # https://github.com/VinAIResearch/BARTpho/blob/main/VietnameseToneNormalization.md
@@ -36,7 +45,10 @@ class Helpers:
         text = unicodedata.normalize("NFC", text)
         return text
     
-    def read_csv_unite(path: str) -> pd.DataFrame:
+    def read_csv_unite(self, path: str='') -> pd.DataFrame:
+        
+        if len(path) <= 0:
+            path = self.path
         
         names = ["Tên dự án", "Phường", "Hệ thống", "Liên hệ", "Tên hệ thống", "Dạng phòng", "Số lượng phòng", "Phòng đang trống", "Tiến độ cập nhật", "Thông tin thiếu", "Phân công check phòng", "Call/Nhắn tin Zalo", "Đặc điểm", "Lan Anh", "Chính sách", "Nhóm zalo", "Link UNC", "Rổ hàng ONLINE", "Liệt kê driver hình"]
         df = pd.read_csv(path, index_col=0, encoding='utf-8-sig', names=names)
@@ -54,19 +66,28 @@ class Helpers:
             for col in df.columns:
                 parts.append(f"{col}: {row[col]}")
             sentence = " | ".join(parts)
-            sentence = self.normalize_vnese(sentence)
+            sentence = self.normalize_vnese(sentence.replace('\n', ' '))
             sentences.append(sentence)
         return sentences
 
 class ProcessCSV:
     
-    def processing_context_csv(path: str) -> list[str]:
+    def __init__(self):
+        self.path = PATH_SOURCE_CSV
+
+    
+    def processing_context_csv(self, path: str = '') -> list[str]:
         
         """Return a list constain combine content.
         
+        Output: src/data/csv/sequences.csv
+                
         Param:
             + path: Relative path string.
         """
+        
+        if len(path) <= 0:
+            path = self.path
         
         helper = Helpers()
         result = []
